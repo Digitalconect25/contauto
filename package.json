@@ -1,0 +1,32 @@
+{
+  "name": "contauto",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "@supabase/supabase-js": "^2.39.0"
+  },
+  "devDependencies": {
+    "vite": "^5.0.0",
+    "@vitejs/plugin-react": "^4.2.0"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  }
+}
+```
+
+Haz clic en **"Commit new file"**.
+
+---
+
+**Archivo 2 - vite.config.js**
+
+Mismo proceso, **"Add file" > "Create new file"**.
+
+Nombre:
+```
+vite.config.js
