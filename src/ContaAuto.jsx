@@ -601,6 +601,17 @@ function DetalleFacturaModal({ factura, logo, onClose, onEdit, onDelete }) {
                 <Tag color={isV?(factura.cobrado?"green":"orange"):( factura.pagado?"green":"orange")}>{isV?(factura.cobrado?"Cobrada":"Pendiente cobro"):( factura.pagado?"Pagada":"Pendiente pago")}</Tag>
               </div>
               {factura.notas&&<div className="text-xs text-gray-400 mt-2 italic border-t border-gray-200 pt-2">{factura.notas}</div>}
+              {factura.documento_url && (
+                <div className="flex items-center gap-2 mt-2 pt-2 border-t border-gray-200">
+                  <svg className="w-4 h-4 text-rose-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/>
+                  </svg>
+                  <a href={factura.documento_url} target="_blank" rel="noopener noreferrer"
+                    className="text-xs text-blue-600 hover:underline truncate">
+                    {factura.documento_nombre || "Ver documento adjunto"}
+                  </a>
+                </div>
+              )}
             </div>
           </div>
           <div className="rounded-xl border border-gray-200 overflow-hidden">
@@ -1453,7 +1464,7 @@ function FacturaEmitidaForm({ actividades, facturas, onSave, onCancel, initial, 
 // FORMULARIO DOCUMENTO RECIBIDO (gastos, ingresos de proveedores, autofacturas)
 // ════════════════════════════════════════════════════════════
 
-function DocumentoRecibidoForm({ actividades, onSave, onCancel, initial, contactos=[] }) {
+function DocumentoRecibidoForm({ actividades, onSave, onCancel, initial, contactos=[], userId }) {
   const EMPTY = {
     modo:"recibida", tipo:"gasto", tipoDoc:"factura",
     numero:"", fecha:today(), cliente:"", nif:"", actividad:actividades[0]||"",
@@ -1468,10 +1479,40 @@ function DocumentoRecibidoForm({ actividades, onSave, onCancel, initial, contact
   const tot = calcFactura(f.lineas, f.retencionPct, false);
   const isIngreso = f.tipo === "venta";
 
-  const save = () => {
+  // ── Adjunto ──────────────────────────────────────────
+  const [archivoFile,   setArchivoFile]   = useState(null);
+  const [subiendoDoc,   setSubiendoDoc]   = useState(false);
+  const [docExistente,  setDocExistente]  = useState(initial?.documento_url ? { url: initial.documento_url, nombre: initial.documento_nombre } : null);
+
+  const handleArchivo = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 10 * 1024 * 1024) { alert("El archivo no puede superar 10 MB."); return; }
+    setArchivoFile(file);
+  };
+
+  const save = async () => {
     if (!f.cliente.trim()){ alert(`${isIngreso?"Emisor":"Proveedor"} obligatorio.`); return; }
     if (!f.fecha)         { alert("Fecha obligatoria."); return; }
-    onSave(f);
+
+    let docUrl  = docExistente?.url  || null;
+    let docNombre = docExistente?.nombre || null;
+
+    if (archivoFile && userId) {
+      setSubiendoDoc(true);
+      const ext  = archivoFile.name.split(".").pop();
+      const path = `${userId}/${Date.now()}-${archivoFile.name.replace(/[^a-zA-Z0-9._-]/g,"_")}`;
+      const { data, error } = await supabase.storage.from("documentos").upload(path, archivoFile, { upsert: false });
+      setSubiendoDoc(false);
+      if (error) { alert("Error al subir el archivo: " + error.message); return; }
+      const { data: urlData } = supabase.storage.from("documentos").getPublicUrl(data.path);
+      // Si es privado usamos signed URL en su lugar
+      const { data: signed } = await supabase.storage.from("documentos").createSignedUrl(data.path, 60 * 60 * 24 * 365);
+      docUrl    = signed?.signedUrl || urlData?.publicUrl || null;
+      docNombre = archivoFile.name;
+    }
+
+    onSave({ ...f, documento_url: docUrl, documento_nombre: docNombre });
   };
 
   return (
@@ -1599,6 +1640,31 @@ function DocumentoRecibidoForm({ actividades, onSave, onCancel, initial, contact
           <input className="w-full border rounded-lg px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-slate-300 outline-none"
             value={f.notas} onChange={e=>set("notas",e.target.value)} placeholder="Referencia, expediente, observaciones..."/>
         </div>
+
+        {/* Adjuntar documento */}
+        <div className="col-span-2">
+          <label className="text-xs font-semibold text-gray-600 block mb-1.5">Documento adjunto (PDF, imagen)</label>
+          {docExistente && (
+            <div className="flex items-center gap-2 mb-2 text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+              <svg className="w-4 h-4 text-rose-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/>
+              </svg>
+              <a href={docExistente.url} target="_blank" rel="noopener noreferrer" className="truncate text-blue-600 hover:underline flex-1">{docExistente.nombre || "Ver documento"}</a>
+              <button onClick={()=>setDocExistente(null)} className="text-rose-400 hover:text-rose-600 font-bold ml-1">✕</button>
+            </div>
+          )}
+          <div className="flex items-center gap-3">
+            <label className="cursor-pointer flex items-center gap-2 px-4 py-2 border border-dashed border-slate-300 rounded-lg text-xs text-slate-500 hover:bg-slate-50 transition-colors">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
+              </svg>
+              {archivoFile ? archivoFile.name : "Seleccionar archivo"}
+              <input type="file" accept=".pdf,.jpg,.jpeg,.png,.webp" className="hidden" onChange={handleArchivo}/>
+            </label>
+            {archivoFile && <button onClick={()=>setArchivoFile(null)} className="text-xs text-rose-400 hover:text-rose-600">Quitar</button>}
+          </div>
+          <p className="text-xs text-slate-400 mt-1">PDF, JPG o PNG. Máximo 10 MB. Se guardará en tu cuenta.</p>
+        </div>
       </div>
 
       {/* Total */}
@@ -1620,8 +1686,8 @@ function DocumentoRecibidoForm({ actividades, onSave, onCancel, initial, contact
 
       <div className="flex gap-3 justify-end">
         <button onClick={onCancel} className="px-5 py-2.5 text-sm font-semibold border rounded-xl text-gray-600 hover:bg-gray-50">Cancelar</button>
-        <button onClick={save} className={`px-6 py-2.5 text-sm font-black text-white rounded-xl shadow-lg ${isIngreso?"bg-sky-600 hover:bg-sky-500":"bg-rose-600 hover:bg-rose-500"}`}>
-          {initial?"Guardar cambios":isIngreso?"Registrar ingreso":"Registrar gasto"}
+        <button onClick={save} disabled={subiendoDoc} className={`px-6 py-2.5 text-sm font-black text-white rounded-xl shadow-lg disabled:opacity-60 ${isIngreso?"bg-sky-600 hover:bg-sky-500":"bg-rose-600 hover:bg-rose-500"}`}>
+          {subiendoDoc ? "Subiendo archivo..." : initial?"Guardar cambios":isIngreso?"Registrar ingreso":"Registrar gasto"}
         </button>
       </div>
     </div>
@@ -1629,7 +1695,7 @@ function DocumentoRecibidoForm({ actividades, onSave, onCancel, initial, contact
 }
 
 // Wrapper que decide qué formulario mostrar según modo
-function FacturaForm({ actividades, facturas, onSave, onCancel, initial, logo, setLogo, contactos=[] }) {
+function FacturaForm({ actividades, facturas, onSave, onCancel, initial, logo, setLogo, contactos=[], userId }) {
   const [modo, setModo] = useState(() => initial?.modo || "emitida");
   if (!initial) {
     return (
@@ -1654,7 +1720,7 @@ function FacturaForm({ actividades, facturas, onSave, onCancel, initial, logo, s
         </div>
         {modo==="emitida"
           ? <FacturaEmitidaForm actividades={actividades} facturas={facturas} onSave={onSave} onCancel={onCancel} logo={logo} setLogo={setLogo} contactos={contactos}/>
-          : <DocumentoRecibidoForm actividades={actividades} onSave={onSave} onCancel={onCancel} contactos={contactos}/>
+          : <DocumentoRecibidoForm actividades={actividades} onSave={onSave} onCancel={onCancel} contactos={contactos} userId={userId}/>
         }
       </div>
     );
@@ -1662,7 +1728,7 @@ function FacturaForm({ actividades, facturas, onSave, onCancel, initial, logo, s
   // Edición: usa el formulario correspondiente al modo original
   return initial.modo === "emitida"
     ? <FacturaEmitidaForm actividades={actividades} facturas={facturas} onSave={onSave} onCancel={onCancel} initial={initial} logo={logo} setLogo={setLogo} contactos={contactos}/>
-    : <DocumentoRecibidoForm actividades={actividades} onSave={onSave} onCancel={onCancel} initial={initial} contactos={contactos}/>;
+    : <DocumentoRecibidoForm actividades={actividades} onSave={onSave} onCancel={onCancel} initial={initial} contactos={contactos} userId={userId}/>;
 }
 
 // ════════════════════════════════════════════════════════════
@@ -2039,7 +2105,16 @@ function ListaFacturas({ facturas, logo, onEdit, onDelete, onView, tipoFiltro, p
                   return (
                     <tr key={f.id} className={`border-t border-gray-100 hover:bg-slate-50 cursor-pointer group transition-colors ${pendiente?"bg-orange-50/20":""}`} onClick={() => onView(f)}>
                       <td className="py-2.5 px-3" onClick={e=>e.stopPropagation()}><Tag color={isV?"green":"red"}>{isV?"Venta":"Gasto"}</Tag></td>
-                      <td className="py-2.5 px-3 font-mono text-xs font-black text-gray-600">{f.numero}</td>
+                      <td className="py-2.5 px-3 font-mono text-xs font-black text-gray-600">
+                        <div className="flex items-center gap-1">
+                          {f.numero}
+                          {f.documento_url && (
+                            <svg title="Tiene documento adjunto" className="w-3 h-3 text-blue-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/>
+                            </svg>
+                          )}
+                        </div>
+                      </td>
                       <td className="py-2.5 px-3 text-gray-500 text-xs whitespace-nowrap">{new Date(f.fecha).toLocaleDateString("es-ES")}</td>
                       <td className="py-2.5 px-3"><div className="font-semibold text-gray-800 truncate max-w-36">{f.cliente}</div>{f.nif&&<div className="text-xs text-gray-400 font-mono">{f.nif}</div>}</td>
                       <td className="py-2.5 px-3"><Tag color="gray">{f.actividad}</Tag></td>
@@ -2076,6 +2151,143 @@ function ListaFacturas({ facturas, logo, onEdit, onDelete, onView, tipoFiltro, p
 // ════════════════════════════════════════════════════════════
 // DASHBOARD
 // ════════════════════════════════════════════════════════════
+
+// ════════════════════════════════════════════════════════════
+// HTML IMPRIMIBLE - RESUMEN CONTABLE (mes / trimestre / año)
+// ════════════════════════════════════════════════════════════
+function buildResumenContablePrintHTML({ pLabel, qLabel, resF, resN, gastosTotal, ivaAPagar, pagoIRPF_F, irpf111, factP, nomiP, porActividad, periodMode, periodValue, periodYear }) {
+  const now = new Date().toLocaleDateString("es-ES", { day:"2-digit", month:"long", year:"numeric" });
+  const rowsFacturas = (tipo) => factP.filter(f=>f.tipo===tipo).map(f=>{
+    const t = calcFactura(f.lineas, f.retencionPct, f.aplicarRecargo);
+    const nombre = f.clienteNombre || f.cliente_nombre || "-";
+    const nif = f.clienteNif || f.cliente_nif || "-";
+    return `<tr>
+      <td>${f.fecha||""}</td><td>${f.numero||""}</td>
+      <td>${nombre}</td><td>${nif}</td>
+      <td style="text-align:right">${fmt(t.totalBase)}</td>
+      <td style="text-align:right">${fmt(t.totalIVA)}</td>
+      <td style="text-align:right">${fmt(t.totalRetencion)}</td>
+      <td style="text-align:right">${fmt(t.total)}</td>
+    </tr>`;
+  }).join("");
+
+  const rowsNominas = nomiP.map(n=>{
+    const calc = calcNomina(n);
+    return `<tr>
+      <td>${n.fecha||""}</td>
+      <td>${n.trabajadorNombre||n.trabajador_nombre||"-"}</td>
+      <td style="text-align:right">${fmt(calc.bruto)}</td>
+      <td style="text-align:right">${fmt(calc.ssTrabajador)}</td>
+      <td style="text-align:right">${fmt(calc.irpf)}</td>
+      <td style="text-align:right">${fmt(calc.neto)}</td>
+      <td style="text-align:right">${fmt(calc.ssEmpresa)}</td>
+      <td style="text-align:right">${fmt(calc.costeTotal)}</td>
+    </tr>`;
+  }).join("");
+
+  const actRows = porActividad.map(([act, v])=>`<tr>
+    <td>${act||"Sin actividad"}</td>
+    <td style="text-align:right">${fmt(v.ingresos)}</td>
+    <td style="text-align:right">${fmt(v.gastos)}</td>
+    <td style="text-align:right">${fmt(v.ingresos-v.gastos)}</td>
+    <td style="text-align:right">${v.n}</td>
+  </tr>`).join("");
+
+  const resultado = resF.ingresos - gastosTotal;
+  const css = `
+    body{font-family:'Segoe UI',Arial,sans-serif;font-size:11px;color:#1e293b;margin:0;padding:0}
+    h1{font-size:18px;font-weight:800;margin:0 0 2px}
+    h2{font-size:13px;font-weight:700;margin:18px 0 6px;color:#0f172a;border-bottom:2px solid #e2e8f0;padding-bottom:4px}
+    h3{font-size:11px;font-weight:700;margin:12px 0 4px;color:#475569}
+    table{width:100%;border-collapse:collapse;margin-bottom:8px;font-size:10px}
+    th{background:#0f172a;color:#fff;padding:5px 7px;text-align:left;font-size:9px;text-transform:uppercase;letter-spacing:.04em}
+    td{padding:4px 7px;border-bottom:1px solid #f1f5f9}
+    tr:nth-child(even) td{background:#f8fafc}
+    .kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px}
+    .kpi{background:#f1f5f9;border-radius:8px;padding:10px 12px}
+    .kpi-val{font-size:15px;font-weight:800;color:#0f172a}
+    .kpi-lbl{font-size:9px;color:#64748b;text-transform:uppercase;letter-spacing:.05em;margin-top:2px}
+    .kpi.green .kpi-val{color:#059669} .kpi.red .kpi-val{color:#dc2626} .kpi.blue .kpi-val{color:#2563eb} .kpi.amber .kpi-val{color:#d97706}
+    .fis-box{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px}
+    .fis{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 12px}
+    .fis-title{font-size:9px;font-weight:700;color:#64748b;text-transform:uppercase;margin-bottom:4px}
+    .fis-val{font-size:13px;font-weight:800;color:#0f172a}
+    .fis-sub{font-size:9px;color:#94a3b8;margin-top:2px}
+    .header-bar{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px;padding-bottom:12px;border-bottom:3px solid #0f172a}
+    .badge{display:inline-block;background:#0f172a;color:#fff;border-radius:4px;padding:2px 8px;font-size:9px;font-weight:700;letter-spacing:.06em;margin-top:4px}
+    .total-row td{font-weight:700;background:#f1f5f9!important;border-top:2px solid #cbd5e1}
+    @media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}@page{margin:12mm 14mm;size:A4}}
+  `;
+
+  return `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><title>Resumen Contable ${pLabel}</title>
+  <style>${css}</style></head><body>
+  <div class="header-bar">
+    <div>
+      <h1>Resumen Contable</h1>
+      <div class="badge">${pLabel}</div>
+    </div>
+    <div style="text-align:right;font-size:10px;color:#64748b">Generado el ${now}</div>
+  </div>
+
+  <div class="kpi-grid">
+    <div class="kpi green"><div class="kpi-val">${fmt(resF.ingresos)}</div><div class="kpi-lbl">Ingresos (base)</div></div>
+    <div class="kpi red"><div class="kpi-val">${fmt(resF.gastos)}</div><div class="kpi-lbl">Gastos facturación</div></div>
+    <div class="kpi blue"><div class="kpi-val">${fmt(resN.totalCoste)}</div><div class="kpi-lbl">Coste nóminas</div></div>
+    <div class="kpi ${resultado>=0?"green":"red"}"><div class="kpi-val">${fmt(resultado)}</div><div class="kpi-lbl">Resultado real</div></div>
+  </div>
+
+  <h2>Obligaciones fiscales estimadas - ${qLabel}</h2>
+  <div class="fis-box">
+    <div class="fis"><div class="fis-title">Mod. 303 - IVA a ingresar</div><div class="fis-val">${fmt(ivaAPagar)}</div><div class="fis-sub">IVA rep. ${fmt(resF.ivaRep)} - IVA sop. ${fmt(resF.ivaSop)}</div></div>
+    <div class="fis"><div class="fis-title">Mod. 130 - IRPF estimación directa</div><div class="fis-val">${fmt(pagoIRPF_F)}</div><div class="fis-sub">20% sobre rendimiento neto</div></div>
+    <div class="fis"><div class="fis-title">Mod. 111 - IRPF retenciones</div><div class="fis-val">${fmt(irpf111)}</div><div class="fis-sub">Nóminas + profesionales externos</div></div>
+  </div>
+
+  ${porActividad.length > 0 ? `
+  <h2>Resultados por actividad</h2>
+  <table><thead><tr><th>Actividad</th><th>Ingresos</th><th>Gastos</th><th>Resultado</th><th>Docs</th></tr></thead>
+  <tbody>${actRows}</tbody></table>` : ""}
+
+  ${factP.filter(f=>f.tipo==="venta").length > 0 ? `
+  <h2>Facturas emitidas (${factP.filter(f=>f.tipo==="venta").length})</h2>
+  <table><thead><tr><th>Fecha</th><th>Número</th><th>Cliente</th><th>NIF</th><th>Base</th><th>IVA</th><th>Retención</th><th>Total</th></tr></thead>
+  <tbody>${rowsFacturas("venta")}
+  <tr class="total-row"><td colspan="4">TOTAL</td>
+    <td style="text-align:right">${fmt(resF.ingresos)}</td>
+    <td style="text-align:right">${fmt(resF.ivaRep)}</td>
+    <td style="text-align:right">${fmt(resF.retencionesSop)}</td>
+    <td style="text-align:right">${fmt(resF.ingresos+resF.ivaRep-resF.retencionesSop)}</td>
+  </tr></tbody></table>` : ""}
+
+  ${factP.filter(f=>f.tipo==="gasto").length > 0 ? `
+  <h2>Facturas recibidas / gastos (${factP.filter(f=>f.tipo==="gasto").length})</h2>
+  <table><thead><tr><th>Fecha</th><th>Número</th><th>Proveedor</th><th>NIF</th><th>Base</th><th>IVA</th><th>Retención</th><th>Total</th></tr></thead>
+  <tbody>${rowsFacturas("gasto")}
+  <tr class="total-row"><td colspan="4">TOTAL</td>
+    <td style="text-align:right">${fmt(resF.gastos)}</td>
+    <td style="text-align:right">${fmt(resF.ivaSop)}</td>
+    <td style="text-align:right">${fmt(resF.retencionesRep)}</td>
+    <td style="text-align:right">${fmt(resF.gastos+resF.ivaSop-resF.retencionesRep)}</td>
+  </tr></tbody></table>` : ""}
+
+  ${nomiP.length > 0 ? `
+  <h2>Nóminas (${nomiP.length})</h2>
+  <table><thead><tr><th>Fecha</th><th>Trabajador</th><th>Bruto</th><th>SS Trab.</th><th>IRPF</th><th>Neto</th><th>SS Empresa</th><th>Coste total</th></tr></thead>
+  <tbody>${rowsNominas}
+  <tr class="total-row"><td colspan="2">TOTAL</td>
+    <td style="text-align:right">${fmt(resN.totalBruto)}</td>
+    <td style="text-align:right">${fmt(resN.totalSSTrab)}</td>
+    <td style="text-align:right">${fmt(resN.totalIRPF)}</td>
+    <td style="text-align:right">${fmt(resN.totalNeto)}</td>
+    <td style="text-align:right">${fmt(resN.totalSSEmp)}</td>
+    <td style="text-align:right">${fmt(resN.totalCoste)}</td>
+  </tr></tbody></table>` : ""}
+
+  <div style="margin-top:24px;padding-top:10px;border-top:1px solid #e2e8f0;font-size:9px;color:#94a3b8;text-align:center">
+    ContaAuto · Documento generado automáticamente · Solo orientativo, no sustituye asesoría fiscal
+  </div>
+  </body></html>`;
+}
 
 function Dashboard({ facturas, nominas, trabajadores, periodMode, periodValue, periodYear }) {
   const factP = useMemo(() => facturas.filter(f => matchesPeriod(f,periodMode,periodValue,periodYear)), [facturas,periodMode,periodValue,periodYear]);
@@ -2116,8 +2328,28 @@ function Dashboard({ facturas, nominas, trabajadores, periodMode, periodValue, p
   }, [factP]);
   const maxBar = Math.max(...porActividad.map(([,v])=>v.ingresos+v.gastos),1);
 
+  const handlePrintResumen = () => {
+    const html = buildResumenContablePrintHTML({ pLabel, qLabel, resF, resN, gastosTotal, ivaAPagar, pagoIRPF_F, irpf111, factP, nomiP, porActividad, periodMode, periodValue, periodYear });
+    openPrint(html);
+  };
+  const handlePDFResumen = () => {
+    const html = buildResumenContablePrintHTML({ pLabel, qLabel, resF, resN, gastosTotal, ivaAPagar, pagoIRPF_F, irpf111, factP, nomiP, porActividad, periodMode, periodValue, periodYear });
+    downloadPDF(html, `resumen-contable-${pLabel.replace(/ /g,"-")}.pdf`);
+  };
+
   return (
     <div className="space-y-8">
+      {/* Botones imprimir / PDF resumen */}
+      <div className="flex justify-end gap-2">
+        <button onClick={handlePrintResumen}
+          className="flex items-center gap-1.5 text-xs font-semibold px-4 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 transition-colors shadow-sm">
+          {Ico.print} Imprimir resumen
+        </button>
+        <button onClick={handlePDFResumen}
+          className="flex items-center gap-1.5 text-xs font-semibold px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-700 text-white transition-colors shadow-sm">
+          {Ico.pdf} Descargar PDF
+        </button>
+      </div>
       <div>
         <Divider label={`Resumen consolidado - ${pLabel}`}/>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -3743,6 +3975,59 @@ function SectionHeader({ view, vCount, gCount, pendCount, tCount, miniChartData 
 
 
 // ════════════════════════════════════════════════════════════
+// HELPERS: normalizar filas de DB → objetos que usa la UI
+// ════════════════════════════════════════════════════════════
+function dbToFactura(f) {
+  return {
+    ...f,
+    // campos que la UI usa sin sufijo
+    cliente:    f.cliente_nombre || f.cliente || "",
+    nif:        f.cliente_nif    || f.nif    || "",
+    email:      f.cliente_email  || f.email  || "",
+    telefono:   f.cliente_telefono || f.telefono || "",
+    direccion:  f.cliente_direccion || f.direccion || "",
+    actividad:  f.actividad || "",
+    // alias camelCase que usan algunos componentes
+    clienteNombre:   f.cliente_nombre || "",
+    clienteNif:      f.cliente_nif || "",
+    clienteEmail:    f.cliente_email || "",
+    clienteTelefono: f.cliente_telefono || "",
+    clienteDireccion:f.cliente_direccion || "",
+    retencionPct:    f.retencion_pct  ?? 0,
+    aplicarRecargo:  f.aplicar_recargo ?? false,
+    lineas:          f.lineas || [],
+    cobrado:         f.cobrado  ?? false,
+    pagado:          f.pagado   ?? false,
+    notas:           f.notas    || "",
+    documento_url:   f.documento_url    || null,
+    documento_nombre:f.documento_nombre || null,
+  };
+}
+
+function dbToTrabajador(t) {
+  return {
+    ...t,
+    salarioBase: t.salario_base ?? 0,
+    fechaAlta:   t.fecha_alta   || "",
+    activo:      t.activo ?? true,
+    notas:       t.notas  || "",
+  };
+}
+
+function dbToNomina(n, trabajadoresArr = []) {
+  const trab = trabajadoresArr.find(t => t.id === n.trabajador_id);
+  return {
+    ...n,
+    trabajadorId:    n.trabajador_id,
+    trabajadorNombre:n.trabajador_nombre || trab?.nombre || "",
+    horasExtra:      n.horas_extra      ?? 0,
+    plusTransporte:  n.plus_transporte  ?? 0,
+    otrosConceptos:  n.otros_conceptos  ?? 0,
+    notas:           n.notas || "",
+  };
+}
+
+// ════════════════════════════════════════════════════════════
 // PANTALLA DE LOGIN
 // ════════════════════════════════════════════════════════════
 function LoginScreen({ onLogin }) {
@@ -3899,10 +4184,13 @@ function ContaAutoApp() {
       supabase.from("trabajadores").select("*").eq("user_id", uid).order("nombre"),
       supabase.from("nominas").select("*").eq("user_id", uid).order("anio", { ascending: false }),
     ]);
-    if (rf.data) setFacturas(rf.data.map(f => ({ ...f, lineas: f.lineas || [], retencionPct: f.retencion_pct, aplicarRecargo: f.aplicar_recargo })));
+    if (rf.data) setFacturas(rf.data.map(dbToFactura));
     if (rc.data) setContactos(rc.data);
-    if (rt.data) setTrabajadores(rt.data.map(t => ({ ...t, salarioBase: t.salario_base, fechaAlta: t.fecha_alta })));
-    if (rn.data) setNominas(rn.data.map(n => ({ ...n, horasExtra: n.horas_extra, plusTransporte: n.plus_transporte, otrosConceptos: n.otros_conceptos, trabajadorId: n.trabajador_id })));
+    if (rt.data) setTrabajadores(rt.data.map(dbToTrabajador));
+    if (rn.data) {
+      const trabajadoresData = rt.data || [];
+      setNominas(rn.data.map(n => dbToNomina(n, trabajadoresData)));
+    }
   }, [user]);
 
   useEffect(() => { cargarDatos(); }, [cargarDatos]);
@@ -3912,28 +4200,35 @@ function ContaAutoApp() {
     const uid = user?.id;
     const row = {
       user_id: uid, tipo: f.tipo, numero: f.numero, fecha: f.fecha,
-      cliente_nombre: f.clienteNombre || f.cliente_nombre,
-      cliente_nif: f.clienteNif || f.cliente_nif,
-      cliente_email: f.clienteEmail || f.cliente_email,
-      cliente_telefono: f.clienteTelefono || f.cliente_telefono,
-      cliente_direccion: f.clienteDireccion || f.cliente_direccion,
+      actividad: f.actividad || "",
+      cliente_nombre: f.cliente || f.clienteNombre || f.cliente_nombre || "",
+      cliente_nif: f.nif || f.clienteNif || f.cliente_nif || "",
+      cliente_email: f.email || f.clienteEmail || f.cliente_email || "",
+      cliente_telefono: f.telefono || f.clienteTelefono || f.cliente_telefono || "",
+      cliente_direccion: f.direccion || f.clienteDireccion || f.cliente_direccion || "",
       lineas: f.lineas || [],
       retencion_pct: f.retencionPct ?? f.retencion_pct ?? 0,
       aplicar_recargo: f.aplicarRecargo ?? f.aplicar_recargo ?? false,
-      cobrado: f.cobrado ?? false, pagado: f.pagado ?? false, notas: f.notas || "",
+      cobrado: f.cobrado ?? false,
+      pagado: f.pagado ?? false,
+      notas: f.notas || "",
+      documento_url: f.documento_url || null,
+      documento_nombre: f.documento_nombre || null,
     };
     if (editing) {
-      const { data } = await supabase.from("facturas").update(row).eq("id", editing.id).select().single();
+      const { data, error } = await supabase.from("facturas").update(row).eq("id", editing.id).select().single();
+      if (error) { alert("Error al guardar: " + error.message); return; }
       if (data) {
-        const updated = { ...data, lineas: data.lineas || [], retencionPct: data.retencion_pct, aplicarRecargo: data.aplicar_recargo };
-        setFacturas(p => p.map(x => x.id===editing.id ? updated : x));
+        const updated = dbToFactura(data);
+        setFacturas(p => p.map(x => x.id === editing.id ? updated : x));
         setContactos(p => upsertContacto(p, updated));
       }
-      closeForm(); setView(f.tipo==="venta"?"ventas":"gastos");
+      closeForm(); setView(f.tipo === "venta" ? "ventas" : "gastos");
     } else {
-      const { data } = await supabase.from("facturas").insert(row).select().single();
+      const { data, error } = await supabase.from("facturas").insert(row).select().single();
+      if (error) { alert("Error al guardar: " + error.message); return; }
       if (data) {
-        const saved = { ...data, lineas: data.lineas || [], retencionPct: data.retencion_pct, aplicarRecargo: data.aplicar_recargo };
+        const saved = dbToFactura(data);
         setFacturas(p => [saved, ...p]);
         setContactos(p => upsertContacto(p, saved));
         closeForm(); setCreada(saved);
@@ -3957,15 +4252,22 @@ function ContaAutoApp() {
   // ── Trabajadores ──────────────────────────────────────
   const saveTrabajador = async (t) => {
     const uid = user?.id;
-    const row = { user_id: uid, nombre: t.nombre, nif: t.nif, categoria: t.categoria,
-      contrato: t.contrato, salario_base: t.salarioBase ?? t.salario_base ?? 0,
-      activo: t.activo ?? true, fecha_alta: t.fechaAlta || t.fecha_alta || null };
+    const row = {
+      user_id: uid, nombre: t.nombre, nif: t.nif, categoria: t.categoria,
+      contrato: t.contrato,
+      salario_base: t.salarioBase ?? t.salario_base ?? 0,
+      activo: t.activo ?? true,
+      fecha_alta: t.fechaAlta || t.fecha_alta || null,
+      notas: t.notas || "",
+    };
     if (editing) {
-      const { data } = await supabase.from("trabajadores").update(row).eq("id", editing.id).select().single();
-      if (data) setTrabajadores(p => p.map(x => x.id===editing.id ? { ...data, salarioBase: data.salario_base, fechaAlta: data.fecha_alta } : x));
+      const { data, error } = await supabase.from("trabajadores").update(row).eq("id", editing.id).select().single();
+      if (error) { alert("Error al guardar: " + error.message); return; }
+      if (data) setTrabajadores(p => p.map(x => x.id === editing.id ? dbToTrabajador(data) : x));
     } else {
-      const { data } = await supabase.from("trabajadores").insert(row).select().single();
-      if (data) setTrabajadores(p => [...p, { ...data, salarioBase: data.salario_base, fechaAlta: data.fecha_alta }]);
+      const { data, error } = await supabase.from("trabajadores").insert(row).select().single();
+      if (error) { alert("Error al guardar: " + error.message); return; }
+      if (data) setTrabajadores(p => [...p, dbToTrabajador(data)]);
     }
     closeForm(); setView("trabajadores");
   };
@@ -3984,18 +4286,26 @@ function ContaAutoApp() {
   // ── Nóminas ───────────────────────────────────────────
   const saveNomina = async (n) => {
     const uid = user?.id;
-    const row = { user_id: uid, trabajador_id: n.trabajadorId || n.trabajador_id,
-      mes: n.mes, anio: n.anio, fecha: n.fecha || null,
+    const trab = trabajadores.find(t => t.id === (n.trabajadorId || n.trabajador_id));
+    const row = {
+      user_id: uid,
+      trabajador_id: n.trabajadorId || n.trabajador_id,
+      trabajador_nombre: trab?.nombre || n.trabajadorNombre || n.trabajador_nombre || "",
+      mes: n.mes, anio: n.anio,
+      fecha: n.fecha || `${n.anio}-${String(n.mes+1).padStart(2,"0")}-28`,
       horas_extra: n.horasExtra ?? n.horas_extra ?? 0,
       plus_transporte: n.plusTransporte ?? n.plus_transporte ?? 0,
       otros_conceptos: n.otrosConceptos ?? n.otros_conceptos ?? 0,
-      notas: n.notas || "" };
+      notas: n.notas || "",
+    };
     if (editing) {
-      const { data } = await supabase.from("nominas").update(row).eq("id", editing.id).select().single();
-      if (data) setNominas(p => p.map(x => x.id===editing.id ? { ...data, horasExtra: data.horas_extra, plusTransporte: data.plus_transporte, otrosConceptos: data.otros_conceptos, trabajadorId: data.trabajador_id } : x));
+      const { data, error } = await supabase.from("nominas").update(row).eq("id", editing.id).select().single();
+      if (error) { alert("Error al guardar: " + error.message); return; }
+      if (data) setNominas(p => p.map(x => x.id === editing.id ? dbToNomina(data, trabajadores) : x));
     } else {
-      const { data } = await supabase.from("nominas").insert(row).select().single();
-      if (data) setNominas(p => [...p, { ...data, horasExtra: data.horas_extra, plusTransporte: data.plus_transporte, otrosConceptos: data.otros_conceptos, trabajadorId: data.trabajador_id }]);
+      const { data, error } = await supabase.from("nominas").insert(row).select().single();
+      if (error) { alert("Error al guardar: " + error.message); return; }
+      if (data) setNominas(p => [...p, dbToNomina(data, trabajadores)]);
     }
     closeForm(); setView("nominas");
   };
@@ -4206,13 +4516,13 @@ function ContaAutoApp() {
 
             {/* NUEVA FACTURA */}
             {view==="nueva" && !subview && (
-              <FacturaForm actividades={actividades} facturas={facturas} onSave={saveFactura} onCancel={() => goView("facturas")} initial={editing} logo={logo} setLogo={setLogo} contactos={contactos}/>
+              <FacturaForm actividades={actividades} facturas={facturas} onSave={saveFactura} onCancel={() => goView("facturas")} initial={editing} logo={logo} setLogo={setLogo} contactos={contactos} userId={user?.id}/>
             )}
             {subview==="new-trabajador"    && <TrabajadorForm onSave={saveTrabajador} onCancel={closeForm}/>}
             {subview==="edit-trabajador"   && <TrabajadorForm onSave={saveTrabajador} onCancel={closeForm} initial={editing}/>}
             {subview==="new-nomina"        && <NominaForm trabajadores={trabajadores.filter(t=>t.activo)} onSave={saveNomina} onCancel={closeForm}/>}
             {subview==="edit-nomina"       && <NominaForm trabajadores={trabajadores.filter(t=>t.activo)} onSave={saveNomina} onCancel={closeForm} initial={editing}/>}
-            {subview==="edit-factura"      && <FacturaForm actividades={actividades} facturas={facturas} onSave={saveFactura} onCancel={closeForm} initial={editing} logo={logo} setLogo={setLogo} contactos={contactos}/>}
+            {subview==="edit-factura"      && <FacturaForm actividades={actividades} facturas={facturas} onSave={saveFactura} onCancel={closeForm} initial={editing} logo={logo} setLogo={setLogo} contactos={contactos} userId={user?.id}/>}
 
             {!subview && view!=="nueva" && (
               <>
