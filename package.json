@@ -17,16 +17,3 @@
     "preview": "vite preview"
   }
 }
-```
-
-Haz clic en **"Commit new file"**.
-
----
-
-**Archivo 2 - vite.config.js**
-
-Mismo proceso, **"Add file" > "Create new file"**.
-
-Nombre:
-```
-vite.config.js
