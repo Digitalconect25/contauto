@@ -4184,6 +4184,10 @@ function ContaAutoApp() {
       supabase.from("trabajadores").select("*").eq("user_id", uid).order("nombre"),
       supabase.from("nominas").select("*").eq("user_id", uid).order("anio", { ascending: false }),
     ]);
+    if (rf.error) console.error("Error cargando facturas:", rf.error.message);
+    if (rc.error) console.error("Error cargando contactos:", rc.error.message);
+    if (rt.error) console.error("Error cargando trabajadores:", rt.error.message);
+    if (rn.error) console.error("Error cargando nóminas:", rn.error.message);
     if (rf.data) setFacturas(rf.data.map(dbToFactura));
     if (rc.data) setContactos(rc.data);
     if (rt.data) setTrabajadores(rt.data.map(dbToTrabajador));
@@ -4237,15 +4241,19 @@ function ContaAutoApp() {
   };
   const delFactura = async (id) => {
     if (!confirm("¿Eliminar factura?")) return;
-    await supabase.from("facturas").delete().eq("id", id);
-    setFacturas(p => p.filter(f => f.id!==id));
+    const { error } = await supabase.from("facturas").delete().eq("id", id);
+    if (error) { alert("Error al eliminar: " + error.message); return; }
+    setFacturas(p => p.filter(f => f.id !== id));
+    setContactos(p => p.filter(c => c.id !== id)); // limpiar contacto huérfano si procede
   };
   const marcarCobrado = async (id) => {
-    await supabase.from("facturas").update({ cobrado: true }).eq("id", id);
+    const { error } = await supabase.from("facturas").update({ cobrado: true }).eq("id", id);
+    if (error) { alert("Error al actualizar: " + error.message); return; }
     setFacturas(p => p.map(f => f.id===id ? {...f, cobrado:true} : f));
   };
   const marcarPagado = async (id) => {
-    await supabase.from("facturas").update({ pagado: true }).eq("id", id);
+    const { error } = await supabase.from("facturas").update({ pagado: true }).eq("id", id);
+    if (error) { alert("Error al actualizar: " + error.message); return; }
     setFacturas(p => p.map(f => f.id===id ? {...f, pagado:true} : f));
   };
 
@@ -4273,13 +4281,15 @@ function ContaAutoApp() {
   };
   const delTrabajador = async (id) => {
     if (!confirm("¿Eliminar?")) return;
-    await supabase.from("trabajadores").delete().eq("id", id);
-    setTrabajadores(p => p.filter(t => t.id!==id));
+    const { error } = await supabase.from("trabajadores").delete().eq("id", id);
+    if (error) { alert("Error al eliminar: " + error.message); return; }
+    setTrabajadores(p => p.filter(t => t.id !== id));
   };
   const toggleBaja = async (id) => {
     const t = trabajadores.find(x => x.id===id);
     if (!t) return;
-    await supabase.from("trabajadores").update({ activo: !t.activo }).eq("id", id);
+    const { error } = await supabase.from("trabajadores").update({ activo: !t.activo }).eq("id", id);
+    if (error) { alert("Error al actualizar: " + error.message); return; }
     setTrabajadores(p => p.map(x => x.id===id ? {...x, activo:!x.activo} : x));
   };
 
@@ -4311,8 +4321,9 @@ function ContaAutoApp() {
   };
   const delNomina = async (id) => {
     if (!confirm("¿Eliminar?")) return;
-    await supabase.from("nominas").delete().eq("id", id);
-    setNominas(p => p.filter(n => n.id!==id));
+    const { error } = await supabase.from("nominas").delete().eq("id", id);
+    if (error) { alert("Error al eliminar: " + error.message); return; }
+    setNominas(p => p.filter(n => n.id !== id));
   };
 
   const vCount = facturas.filter(f=>f.tipo==="venta").length;
