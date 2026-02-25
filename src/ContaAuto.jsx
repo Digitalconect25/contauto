@@ -4040,8 +4040,13 @@ function LoginScreen({ onLogin }) {
   const handleLogin = async (e) => {
     e.preventDefault();
     setLoading(true); setError("");
-    const { error } = await supabase.auth.signInWithPassword({ email, password: pass });
-    if (error) setError(error.message);
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password: pass });
+    if (error) {
+      if (error.message.includes("Invalid login")) setError("Email o contraseña incorrectos.");
+      else if (error.message.includes("Email not confirmed")) setError("Debes confirmar tu email antes de entrar. Revisa tu bandeja de entrada.");
+      else if (error.message.includes("Invalid API key") || error.message.includes("Failed to fetch")) setError("Error de conexión con la base de datos. Comprueba la configuración.");
+      else setError(error.message);
+    }
     setLoading(false);
   };
 
@@ -4147,7 +4152,7 @@ function ContaAutoApp() {
   const [actividades,   setActividades]  = useState(ACTS_INIT);
   const [logo,          setLogo]         = useState(LOGO_EMPRESA); // logotipo Digital Conect
 
-  const [pantallaBienvenida, setPantallaBienvenida] = useState(true);
+  const [pantallaBienvenida, setPantallaBienvenida] = useState(false);
   const [view,       setView]       = useState("dashboard");
   const [subview,    setSubview]    = useState(null);
   const [editing,    setEditing]    = useState(null);
@@ -4164,12 +4169,14 @@ function ContaAutoApp() {
 
   // ── Auth ──────────────────────────────────────────────
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    supabase.auth.getSession().then(({ data: { session }, error }) => {
+      if (error) console.error("Error obteniendo sesión:", error.message);
       setUser(session?.user ?? null);
       setLoadingData(false);
     });
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null);
+      if (!session) setLoadingData(false);
     });
     return () => subscription.unsubscribe();
   }, []);
