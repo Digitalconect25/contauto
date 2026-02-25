@@ -391,9 +391,28 @@ function buildFacturaPrintHTML(f, logo) {
     ${t.totalRetencion>0?`<div class="tr" style="color:#dc2626"><span>Retención IRPF (${f.retencionPct}%)</span><strong>-${fmt(t.totalRetencion)}</strong></div>`:""}
     <div class="tf"><span>TOTAL FACTURA</span><span>${fmt(t.total)}</span></div>
   </div>
+  ${isV && (f.ibanEmpresa || f.bancoEmpresa) ? `
+  <div style="margin-top:28px;border:2px solid #1e40af;border-radius:10px;padding:16px 20px;background:#eff6ff">
+    <div style="font-size:10px;font-weight:800;color:#1e40af;text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px">
+      Datos bancarios para el pago
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;font-size:12px">
+      ${f.ibanEmpresa ? `<div><span style="color:#6b7280;font-size:10px;display:block;margin-bottom:2px">IBAN / Numero de cuenta</span>
+        <span style="font-family:monospace;font-weight:700;color:#1e3a8a;font-size:13px">${f.ibanEmpresa}</span></div>` : ""}
+      ${f.bancoEmpresa ? `<div><span style="color:#6b7280;font-size:10px;display:block;margin-bottom:2px">Entidad bancaria</span>
+        <span style="font-weight:600;color:#1e3a8a">${f.bancoEmpresa}</span></div>` : ""}
+    </div>
+    <div style="margin-top:10px;font-size:11px;color:#1d4ed8;background:#dbeafe;border-radius:6px;padding:7px 10px">
+      Plazo de pago: 15 dias naturales a partir de la recepcion de esta factura
+    </div>
+  </div>` : ""}
+  ${isV && !f.ibanEmpresa ? `
+  <div style="margin-top:20px;border-radius:8px;padding:10px 14px;background:#fefce8;border:1px solid #fde68a;font-size:11px;color:#92400e">
+    Plazo de pago: 15 dias naturales a partir de la recepcion de esta factura.
+  </div>` : ""}
   <div class="note">
     Documento generado con ContaAuto. ${isV
-      ? "Para que una factura tenga validez legal debe contener: número correlativo, fecha de expedición, datos completos del emisor (NIF/CIF, razón social, domicilio) y del receptor, descripción de la operación, base imponible, tipo y cuota de IVA, y en su caso retención de IRPF (art. 6 RD 1619/2012 Reglamento de Facturación)."
+      ? "Para que una factura tenga validez legal debe contener: numero correlativo, fecha de expedicion, datos completos del emisor (NIF/CIF, razon social, domicilio) y del receptor, descripcion de la operacion, base imponible, tipo y cuota de IVA, y en su caso retencion de IRPF (art. 6 RD 1619/2012 Reglamento de Facturacion)."
       : "Documento recibido registrado internamente. Conserva el original del proveedor como soporte documental del gasto (art. 19 RD 1619/2012)."
     }
   </div>
@@ -1324,6 +1343,7 @@ function FacturaEmitidaForm({ actividades, facturas, onSave, onCancel, initial, 
     numero:autoNum, fecha:today(), cliente:"", nif:"", actividad:actividades[0]||"",
     lineas:[{descripcion:"",cantidad:1,precioUnitario:0,tipoIVA:21,exento:false,descuento:0,aplicarRecargo:false}],
     retencionPct:0, aplicarRecargo:false, notas:"", cobrado:false, pagado:false,
+    ibanEmpresa:"", bancoEmpresa:"",
   };
   const [f, setF] = useState(() => initial ? {...initial} : {...EMPTY});
   const fileRef   = useRef();
@@ -1431,6 +1451,24 @@ function FacturaEmitidaForm({ actividades, facturas, onSave, onCancel, initial, 
           <label className="text-xs font-semibold text-gray-600 block mb-1.5">Notas internas</label>
           <input className="w-full border rounded-lg px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-slate-300 outline-none"
             value={f.notas} onChange={e=>set("notas",e.target.value)} placeholder="Referencia, expediente, condiciones..."/>
+        </div>
+      </div>
+
+      {/* Datos bancarios */}
+      <div className="grid grid-cols-2 gap-4 mb-5 p-4 bg-blue-50 rounded-xl border border-blue-200">
+        <div className="col-span-2">
+          <span className="text-xs font-bold text-blue-800 uppercase tracking-wide">Datos bancarios para el pago</span>
+          <p className="text-xs text-blue-600 mt-0.5">Aparecen en la factura impresa. Plazo automatico: 15 dias desde recepcion.</p>
+        </div>
+        <div>
+          <label className="text-xs font-semibold text-gray-600 block mb-1.5">IBAN / Cuenta bancaria</label>
+          <input className="w-full border border-blue-200 rounded-lg px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-blue-300 outline-none font-mono"
+            value={f.ibanEmpresa||""} onChange={e=>set("ibanEmpresa",e.target.value.toUpperCase())} placeholder="ES91 2100 0418 4502 0005 1332"/>
+        </div>
+        <div>
+          <label className="text-xs font-semibold text-gray-600 block mb-1.5">Entidad bancaria</label>
+          <input className="w-full border border-blue-200 rounded-lg px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-blue-300 outline-none"
+            value={f.bancoEmpresa||""} onChange={e=>set("bancoEmpresa",e.target.value)} placeholder="Nombre del banco"/>
         </div>
       </div>
 
@@ -3847,18 +3885,23 @@ const NAV = [
 
 // ── Sidebar nav items (sin JSX en módulo) ───────────────────
 const NAV_SIDEBAR = [
-  { id:"dashboard",    label:"Panel",         group:"inicio",    iconId:"grid" },
-  { id:"nueva",        label:"Nueva factura", group:"facturas",  iconId:"plus" },
-  { id:"facturas",     label:"Todas",         group:"facturas",  iconId:"doc" },
-  { id:"ventas",       label:"Ventas",        group:"facturas",  iconId:"up" },
-  { id:"gastos",       label:"Gastos",        group:"facturas",  iconId:"down" },
-  { id:"saldos",       label:"Saldos",        group:"facturas",  iconId:"coin" },
-  { id:"trabajadores", label:"Personal",      group:"laboral",   iconId:"users" },
-  { id:"nominas",      label:"Nóminas",       group:"laboral",   iconId:"cash" },
-  { id:"actividades",  label:"Actividades",   group:"fiscal",    iconId:"briefcase" },
-  { id:"mod347",       label:"Mod. 347",      group:"fiscal",    iconId:"chart" },
-  { id:"contactos",    label:"Directorio",    group:"otros",     iconId:"contacts" },
-  { id:"extracto",     label:"Asesor IA",     group:"otros",     iconId:"bolt" },
+  { id:"dashboard",    label:"Panel",            group:"inicio",    iconId:"grid" },
+  { id:"nueva",        label:"Nueva factura",    group:"facturas",  iconId:"plus" },
+  { id:"facturas",     label:"Todas",            group:"facturas",  iconId:"doc" },
+  { id:"ventas",       label:"Ventas",           group:"facturas",  iconId:"up" },
+  { id:"gastos",       label:"Gastos",           group:"facturas",  iconId:"down" },
+  { id:"saldos",       label:"Saldos",           group:"facturas",  iconId:"coin" },
+  { id:"recurrentes",  label:"Recurrentes",      group:"facturas",  iconId:"repeat" },
+  { id:"trabajadores", label:"Personal",         group:"laboral",   iconId:"users" },
+  { id:"nominas",      label:"Nominas",          group:"laboral",   iconId:"cash" },
+  { id:"activos",      label:"Activos",          group:"laboral",   iconId:"building" },
+  { id:"tesoreria",    label:"Tesoreria",        group:"finanzas",  iconId:"bank" },
+  { id:"modelos",      label:"Mod. Hacienda",    group:"finanzas",  iconId:"hacienda" },
+  { id:"actividades",  label:"Actividades",      group:"fiscal",    iconId:"briefcase" },
+  { id:"mod347",       label:"Mod. 347",         group:"fiscal",    iconId:"chart" },
+  { id:"contactos",    label:"Directorio",       group:"otros",     iconId:"contacts" },
+  { id:"extracto",     label:"Asesor IA",        group:"otros",     iconId:"bolt" },
+  { id:"lector",       label:"Lector Facturas",  group:"otros",     iconId:"scan" },
 ];
 
 function NavIcon({ id }) {
@@ -3876,14 +3919,20 @@ function NavIcon({ id }) {
     chart:     <svg viewBox="0 0 20 20" fill="currentColor" className={cls}><path fillRule="evenodd" d="M3 3a1 1 0 000 2v8a2 2 0 002 2h2.586l-1.293 1.293a1 1 0 101.414 1.414L10 15.414l2.293 2.293a1 1 0 001.414-1.414L12.414 15H15a2 2 0 002-2V5a1 1 0 100-2H3zm11 4a1 1 0 10-2 0v4a1 1 0 102 0V7zm-3 1a1 1 0 10-2 0v3a1 1 0 102 0V8zM8 9a1 1 0 00-2 0v2a1 1 0 102 0V9z" clipRule="evenodd"/></svg>,
     contacts:  <svg viewBox="0 0 20 20" fill="currentColor" className={cls}><path d="M13 6a3 3 0 11-6 0 3 3 0 016 0zM18 8a2 2 0 11-4 0 2 2 0 014 0zM14 15a4 4 0 00-8 0v3h8v-3zM6 8a2 2 0 11-4 0 2 2 0 014 0zM16 18v-3a5.972 5.972 0 00-.75-2.906A3.005 3.005 0 0119 15v3h-3zM4.75 12.094A5.973 5.973 0 004 15v3H1v-3a3 3 0 013.75-2.906z"/></svg>,
     bolt:      <svg viewBox="0 0 20 20" fill="currentColor" className={cls}><path fillRule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clipRule="evenodd"/></svg>,
+    repeat:    <svg viewBox="0 0 20 20" fill="currentColor" className={cls}><path d="M8 5a1 1 0 100 2h5.586l-1.293 1.293a1 1 0 001.414 1.414l3-3a1 1 0 000-1.414l-3-3a1 1 0 10-1.414 1.414L13.586 5H8zM12 15a1 1 0 100-2H6.414l1.293-1.293a1 1 0 10-1.414-1.414l-3 3a1 1 0 000 1.414l3 3a1 1 0 001.414-1.414L6.414 15H12z"/></svg>,
+    building:  <svg viewBox="0 0 20 20" fill="currentColor" className={cls}><path fillRule="evenodd" d="M4 4a2 2 0 012-2h8a2 2 0 012 2v12a1 1 0 110 2h-3a1 1 0 01-1-1v-2a1 1 0 00-1-1H9a1 1 0 00-1 1v2a1 1 0 01-1 1H4a1 1 0 110-2V4zm3 1h2v2H7V5zm2 4H7v2h2V9zm2-4h2v2h-2V5zm2 4h-2v2h2V9z" clipRule="evenodd"/></svg>,
+    bank:      <svg viewBox="0 0 20 20" fill="currentColor" className={cls}><path fillRule="evenodd" d="M4 4a2 2 0 00-2 2v1h16V6a2 2 0 00-2-2H4zm14 5H2v5a2 2 0 002 2h12a2 2 0 002-2V9zM4 13a1 1 0 011-1h1a1 1 0 110 2H5a1 1 0 01-1-1zm5-1a1 1 0 100 2h1a1 1 0 100-2H9z" clipRule="evenodd"/></svg>,
+    hacienda:  <svg viewBox="0 0 20 20" fill="currentColor" className={cls}><path fillRule="evenodd" d="M6 2a2 2 0 00-2 2v12a2 2 0 002 2h8a2 2 0 002-2V7.414A2 2 0 0015.414 6L12 2.586A2 2 0 0010.586 2H6zm2 10a1 1 0 10-2 0v3a1 1 0 102 0v-3zm2-3a1 1 0 011 1v5a1 1 0 11-2 0v-5a1 1 0 011-1zm4-1a1 1 0 10-2 0v7a1 1 0 102 0V8z" clipRule="evenodd"/></svg>,
+    scan:      <svg viewBox="0 0 20 20" fill="currentColor" className={cls}><path d="M3 4a1 1 0 011-1h3a1 1 0 010 2H5v2a1 1 0 01-2 0V4zM13 3a1 1 0 000 2h2v2a1 1 0 102 0V4a1 1 0 00-1-1h-3zM3 13a1 1 0 011 1v2h2a1 1 0 110 2H4a1 1 0 01-1-1v-3a1 1 0 011-1zm14 0a1 1 0 011 1v3a1 1 0 01-1 1h-3a1 1 0 110-2h2v-2a1 1 0 011-1z"/></svg>,
   };
   return icons[id] || null;
 }
 
 const NAV_GROUPS = [
   { id:"inicio",   label:"Inicio" },
-  { id:"facturas", label:"Facturación" },
+  { id:"facturas", label:"Facturacion" },
   { id:"laboral",  label:"Laboral" },
+  { id:"finanzas", label:"Finanzas" },
   { id:"fiscal",   label:"Fiscal" },
   { id:"otros",    label:"Herramientas" },
 ];
@@ -3975,6 +4024,996 @@ function SectionHeader({ view, vCount, gCount, pendCount, tCount, miniChartData 
 
 
 // ════════════════════════════════════════════════════════════
+// MODULO 1: TESORERIA - Proyeccion de cobros y pagos
+// ════════════════════════════════════════════════════════════
+function VistaTesoria({ facturas }) {
+  const hoy = new Date();
+  hoy.setHours(0,0,0,0);
+
+  // Construir semanas: semana 0 = pasado vencido, semanas 1-12
+  const semanas = Array.from({ length: 13 }, (_, i) => {
+    if (i === 0) return { label: "Vencido", inicio: new Date(0), fin: new Date(hoy.getTime() - 1), cobros: 0, pagos: 0, items: [] };
+    const ini = new Date(hoy); ini.setDate(hoy.getDate() + (i-1)*7);
+    const fin = new Date(hoy); fin.setDate(hoy.getDate() + i*7 - 1);
+    const label = i === 1 ? "Esta semana" : i === 2 ? "Proxima semana" :
+      `${ini.getDate()}/${ini.getMonth()+1}`;
+    return { label, inicio: ini, fin, cobros: 0, pagos: 0, items: [] };
+  });
+
+  // Distribuir facturas pendientes
+  facturas.forEach(f => {
+    const isPendiente = f.tipo === "venta" ? !f.cobrado : !f.pagado;
+    if (!isPendiente) return;
+    const base = new Date(f.fecha);
+    const venc = new Date(base);
+    // Plazo estimado: ventas 30 dias, gastos al momento
+    venc.setDate(base.getDate() + (f.tipo === "venta" ? 30 : 7));
+    const total = calcFactura(f.lineas || [], f.retencionPct || 0, f.aplicarRecargo || false);
+    const importe = f.tipo === "venta" ? (total.totalConIVA - (total.retencion || 0)) : total.totalConIVA;
+
+    let asignada = false;
+    for (let i = 0; i < semanas.length; i++) {
+      if (venc <= semanas[i].fin || i === semanas.length - 1) {
+        if (f.tipo === "venta") semanas[i].cobros += importe;
+        else semanas[i].pagos += importe;
+        semanas[i].items.push({ ...f, venc, importe });
+        asignada = true;
+        break;
+      }
+    }
+  });
+
+  // Calcular saldo acumulado
+  let acum = 0;
+  const filas = semanas.map(s => {
+    acum += s.cobros - s.pagos;
+    return { ...s, saldo: acum };
+  });
+
+  const maxVal = Math.max(...filas.map(s => Math.max(s.cobros, s.pagos, 1)));
+  const fmt = v => v.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  const [semSel, setSemSel] = React.useState(null);
+
+  return (
+    <div className="p-6 space-y-6">
+      <div>
+        <h2 className="text-xl font-bold text-slate-800">Tesoreria - Proyeccion 12 semanas</h2>
+        <p className="text-sm text-slate-500 mt-1">Estimacion basada en facturas pendientes. Ventas con plazo 30 dias, gastos 7 dias.</p>
+      </div>
+
+      {/* Grafico de barras */}
+      <div className="bg-white rounded-xl border border-slate-200 p-4 overflow-x-auto">
+        <div className="flex items-end gap-1 h-40 min-w-max">
+          {filas.map((s, i) => (
+            <div key={i} className="flex flex-col items-center gap-0.5 cursor-pointer group" style={{minWidth:52}} onClick={() => setSemSel(semSel===i?null:i)}>
+              <div className="flex items-end gap-0.5 h-32">
+                <div title={`Cobros: ${fmt(s.cobros)}`} style={{height: `${(s.cobros/maxVal)*100}%`, minHeight: s.cobros>0?4:0}} className="w-5 bg-emerald-400 rounded-t group-hover:bg-emerald-500 transition-colors"/>
+                <div title={`Pagos: ${fmt(s.pagos)}`}   style={{height: `${(s.pagos/maxVal)*100}%`,  minHeight: s.pagos>0?4:0}}  className="w-5 bg-rose-400 rounded-t group-hover:bg-rose-500 transition-colors"/>
+              </div>
+              <span className="text-xs text-slate-500 mt-1 text-center" style={{fontSize:9}}>{s.label}</span>
+            </div>
+          ))}
+        </div>
+        <div className="flex gap-4 mt-2 text-xs text-slate-500">
+          <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-emerald-400 inline-block"/> Cobros previstos</span>
+          <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-rose-400 inline-block"/> Pagos previstos</span>
+        </div>
+      </div>
+
+      {/* Tabla resumen */}
+      <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="bg-slate-50 border-b border-slate-200">
+              <th className="py-2.5 px-4 text-left font-semibold text-slate-600">Periodo</th>
+              <th className="py-2.5 px-4 text-right font-semibold text-emerald-700">Cobros</th>
+              <th className="py-2.5 px-4 text-right font-semibold text-rose-700">Pagos</th>
+              <th className="py-2.5 px-4 text-right font-semibold text-slate-600">Neto</th>
+              <th className="py-2.5 px-4 text-right font-semibold text-slate-600">Saldo acum.</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filas.map((s, i) => {
+              const neto = s.cobros - s.pagos;
+              return (
+                <React.Fragment key={i}>
+                  <tr
+                    className={`border-b border-slate-100 cursor-pointer hover:bg-slate-50 transition-colors ${semSel===i?"bg-blue-50":""}`}
+                    onClick={() => setSemSel(semSel===i?null:i)}
+                  >
+                    <td className="py-2.5 px-4 font-medium text-slate-700">{s.label}</td>
+                    <td className="py-2.5 px-4 text-right text-emerald-700">{s.cobros>0?fmt(s.cobros)+" EUR":"-"}</td>
+                    <td className="py-2.5 px-4 text-right text-rose-700">{s.pagos>0?fmt(s.pagos)+" EUR":"-"}</td>
+                    <td className={`py-2.5 px-4 text-right font-semibold ${neto>=0?"text-emerald-700":"text-rose-700"}`}>{fmt(neto)} EUR</td>
+                    <td className={`py-2.5 px-4 text-right font-bold ${s.saldo>=0?"text-slate-800":"text-rose-700"}`}>{fmt(s.saldo)} EUR</td>
+                  </tr>
+                  {semSel===i && s.items.length > 0 && (
+                    <tr className="bg-blue-50">
+                      <td colSpan={5} className="px-6 py-3">
+                        <div className="space-y-1">
+                          {s.items.map((item,j) => (
+                            <div key={j} className="flex justify-between text-xs text-slate-600">
+                              <span>{item.cliente || item.clienteNombre || "-"} · {item.numero}</span>
+                              <span className={item.tipo==="venta"?"text-emerald-700":"text-rose-700"}>{item.tipo==="venta"?"Cobro":"Pago"}: {fmt(item.importe)} EUR · vence {item.venc.toLocaleDateString("es-ES")}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════
+// MODULO 2: MODELOS HACIENDA - 303, 130, 111
+// ════════════════════════════════════════════════════════════
+function VistaModelos({ facturas, nominas, periodYear }) {
+  const [tab, setTab] = React.useState("303");
+  const [trimestre, setTrimestre] = React.useState(Math.ceil((new Date().getMonth()+1)/3));
+
+  const trims = [1,2,3,4];
+  const trimLabel = t => `${t}T ${periodYear}`;
+
+  const factsTrim = facturas.filter(f => {
+    const d = new Date(f.fecha);
+    if (d.getFullYear() !== periodYear) return false;
+    return Math.ceil((d.getMonth()+1)/3) === trimestre;
+  });
+
+  const fmt = v => v.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const fmt0 = v => v.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  // === MOD 303 - IVA ===
+  const calcMod303 = () => {
+    let ivaRepercutido = 0, ivaDeducible = 0, baseRep = 0, baseDed = 0;
+    factsTrim.forEach(f => {
+      const calc = calcFactura(f.lineas||[], f.retencionPct||0, f.aplicarRecargo||false);
+      if (f.tipo === "venta") { ivaRepercutido += calc.totalIVA; baseRep += calc.baseTotal; }
+      else { ivaDeducible += calc.totalIVA; baseDed += calc.baseTotal; }
+    });
+    const resultado = ivaRepercutido - ivaDeducible;
+    return { baseRep, ivaRepercutido, baseDed, ivaDeducible, resultado };
+  };
+
+  // === MOD 130 - IRPF Estimacion Directa ===
+  const calcMod130 = () => {
+    let ingresos = 0, gastos = 0;
+    factsTrim.forEach(f => {
+      const calc = calcFactura(f.lineas||[], 0, false);
+      if (f.tipo === "venta") ingresos += calc.baseTotal;
+      else gastos += calc.baseTotal;
+    });
+    const rendimiento = ingresos - gastos;
+    const pago = Math.max(0, rendimiento * 0.20);
+    return { ingresos, gastos, rendimiento, pago };
+  };
+
+  // === MOD 111 - Retenciones IRPF ===
+  const calcMod111 = () => {
+    let baseRetenida = 0, retenciones = 0;
+    factsTrim.forEach(f => {
+      if (f.tipo === "venta" && (f.retencionPct||0) > 0) {
+        const calc = calcFactura(f.lineas||[], f.retencionPct, false);
+        baseRetenida += calc.baseTotal;
+        retenciones += calc.retencion || 0;
+      }
+    });
+    // Retenciones de nominas del trimestre
+    const nominasTrim = nominas.filter(n => {
+      const anio = n.anio || n.anio; const mes = n.mes;
+      if (anio !== periodYear) return false;
+      return Math.ceil((mes+1)/3) === trimestre;
+    });
+    nominasTrim.forEach(n => {
+      const c = calcNomina(n);
+      baseRetenida += c.salarioBruto || 0;
+      retenciones += c.irpf || 0;
+    });
+    return { baseRetenida, retenciones };
+  };
+
+  const m303 = calcMod303();
+  const m130 = calcMod130();
+  const m111 = calcMod111();
+
+  const printModelo = (titulo, filas) => {
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${titulo}</title>
+    <style>body{font-family:Arial,sans-serif;max-width:700px;margin:40px auto;color:#1e293b}
+    h1{color:#0f172a;font-size:22px;border-bottom:3px solid #0f172a;padding-bottom:8px}
+    h2{font-size:14px;color:#475569;margin-top:20px}
+    table{width:100%;border-collapse:collapse;margin-top:8px}
+    td,th{padding:8px 12px;border:1px solid #e2e8f0;font-size:13px}
+    th{background:#f1f5f9;font-weight:600;text-align:left}
+    .total{background:#0f172a;color:white;font-weight:bold}
+    .positivo{color:#16a34a}.negativo{color:#dc2626}
+    .pie{margin-top:40px;font-size:11px;color:#94a3b8;border-top:1px solid #e2e8f0;padding-top:12px}
+    </style></head><body>
+    <h1>${titulo} - ${trimLabel(trimestre)}</h1>
+    <p style="color:#64748b;font-size:13px">Generado: ${new Date().toLocaleDateString("es-ES")} | Ejercicio ${periodYear}</p>
+    <table><thead><tr><th>Concepto</th><th style="text-align:right">Importe (EUR)</th></tr></thead><tbody>
+    ${filas.map(f => `<tr class="${f.total?"total":""}"><td>${f.label}</td><td style="text-align:right;${f.color?"color:"+f.color:""}">${fmt(f.valor)} EUR</td></tr>`).join("")}
+    </tbody></table>
+    <div class="pie">Este documento es un resumen orientativo. Presentar la declaracion oficial en la Sede Electronica de la AEAT.</div>
+    </body></html>`;
+    openPrint(html);
+  };
+
+  const Fila = ({ label, val, bold, color, sep }) => (
+    <tr className={`border-b border-slate-100 ${bold?"bg-slate-50":""} ${sep?"border-t-2 border-slate-300":""}`}>
+      <td className={`py-2.5 px-4 text-sm ${bold?"font-bold text-slate-800":"text-slate-600"}`}>{label}</td>
+      <td className={`py-2.5 px-4 text-right text-sm font-mono ${bold?"font-bold":""} ${color||""}`}>{fmt(val)} EUR</td>
+    </tr>
+  );
+
+  return (
+    <div className="p-6 space-y-6">
+      <div>
+        <h2 className="text-xl font-bold text-slate-800">Modelos de Hacienda</h2>
+        <p className="text-sm text-slate-500 mt-1">Calculo automatico a partir de las facturas registradas.</p>
+      </div>
+
+      {/* Selector trimestre */}
+      <div className="flex gap-2">
+        {trims.map(t => (
+          <button key={t} onClick={() => setTrimestre(t)}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${trimestre===t?"bg-slate-900 text-white":"bg-white border border-slate-200 text-slate-600 hover:bg-slate-50"}`}>
+            {trimLabel(t)}
+          </button>
+        ))}
+      </div>
+
+      {/* Tabs modelos */}
+      <div className="flex gap-1 bg-slate-100 rounded-xl p-1">
+        {[["303","Mod. 303 - IVA"],["130","Mod. 130 - IRPF"],["111","Mod. 111 - Retenciones"]].map(([id,label]) => (
+          <button key={id} onClick={() => setTab(id)}
+            className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-colors ${tab===id?"bg-white shadow-sm text-slate-800":"text-slate-500 hover:text-slate-700"}`}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {/* Mod 303 */}
+      {tab === "303" && (
+        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+          <div className="flex justify-between items-center px-4 py-3 border-b border-slate-200">
+            <h3 className="font-semibold text-slate-800">Modelo 303 - Declaracion del IVA</h3>
+            <button onClick={() => printModelo("Modelo 303 - IVA", [
+              {label:"Base imponible ventas", valor: m303.baseRep},
+              {label:"IVA repercutido (ventas)", valor: m303.ivaRepercutido},
+              {label:"Base imponible compras", valor: m303.baseDed},
+              {label:"IVA soportado deducible (compras)", valor: m303.ivaDeducible},
+              {label:"RESULTADO A INGRESAR / DEVOLVER", valor: m303.resultado, total:true},
+            ])}
+              className="text-xs bg-slate-900 text-white px-3 py-1.5 rounded-lg hover:bg-slate-700">
+              Imprimir
+            </button>
+          </div>
+          <table className="w-full">
+            <tbody>
+              <tr className="bg-emerald-50 border-b border-slate-100"><td colSpan={2} className="px-4 py-2 text-xs font-semibold text-emerald-800 uppercase tracking-wide">IVA Repercutido (Ventas)</td></tr>
+              <Fila label="Base imponible" val={m303.baseRep}/>
+              <Fila label="Cuota IVA repercutida" val={m303.ivaRepercutido} bold/>
+              <tr className="bg-rose-50 border-b border-slate-100"><td colSpan={2} className="px-4 py-2 text-xs font-semibold text-rose-800 uppercase tracking-wide">IVA Soportado Deducible (Compras)</td></tr>
+              <Fila label="Base imponible" val={m303.baseDed}/>
+              <Fila label="Cuota IVA soportado" val={m303.ivaDeducible} bold/>
+              <Fila label={m303.resultado >= 0 ? "RESULTADO A INGRESAR" : "RESULTADO A DEVOLVER"} val={Math.abs(m303.resultado)} bold sep color={m303.resultado>=0?"text-rose-700":"text-emerald-700"}/>
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Mod 130 */}
+      {tab === "130" && (
+        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+          <div className="flex justify-between items-center px-4 py-3 border-b border-slate-200">
+            <h3 className="font-semibold text-slate-800">Modelo 130 - Pago fraccionado IRPF</h3>
+            <button onClick={() => printModelo("Modelo 130 - IRPF Estimacion Directa", [
+              {label:"Ingresos del trimestre", valor: m130.ingresos},
+              {label:"Gastos deducibles", valor: m130.gastos},
+              {label:"Rendimiento neto", valor: m130.rendimiento},
+              {label:"PAGO FRACCIONADO (20%)", valor: m130.pago, total:true},
+            ])}
+              className="text-xs bg-slate-900 text-white px-3 py-1.5 rounded-lg hover:bg-slate-700">
+              Imprimir
+            </button>
+          </div>
+          <table className="w-full">
+            <tbody>
+              <Fila label="Ingresos del trimestre" val={m130.ingresos}/>
+              <Fila label="Gastos deducibles del trimestre" val={m130.gastos}/>
+              <Fila label="Rendimiento neto (Ingresos - Gastos)" val={m130.rendimiento} sep/>
+              <Fila label="Tipo de retencion aplicado" val={0} bold/>
+              <tr className="border-b border-slate-100 bg-slate-50">
+                <td className="py-2.5 px-4 text-sm text-slate-600">Tipo de pago fraccionado</td>
+                <td className="py-2.5 px-4 text-right text-sm font-mono text-slate-800">20%</td>
+              </tr>
+              <Fila label="PAGO FRACCIONADO A INGRESAR" val={m130.pago} bold sep color="text-rose-700"/>
+            </tbody>
+          </table>
+          <p className="px-4 py-3 text-xs text-slate-400">Estimacion directa simplificada. El resultado puede variar segun deducciones adicionales aplicables.</p>
+        </div>
+      )}
+
+      {/* Mod 111 */}
+      {tab === "111" && (
+        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+          <div className="flex justify-between items-center px-4 py-3 border-b border-slate-200">
+            <h3 className="font-semibold text-slate-800">Modelo 111 - Retenciones e ingresos a cuenta</h3>
+            <button onClick={() => printModelo("Modelo 111 - Retenciones IRPF", [
+              {label:"Base de retenciones (facturas + nominas)", valor: m111.baseRetenida},
+              {label:"TOTAL RETENCIONES A INGRESAR", valor: m111.retenciones, total:true},
+            ])}
+              className="text-xs bg-slate-900 text-white px-3 py-1.5 rounded-lg hover:bg-slate-700">
+              Imprimir
+            </button>
+          </div>
+          <table className="w-full">
+            <tbody>
+              <Fila label="Base de retenciones (facturas con retencion + nominas)" val={m111.baseRetenida}/>
+              <Fila label="TOTAL RETENCIONES A INGRESAR" val={m111.retenciones} bold sep color="text-rose-700"/>
+            </tbody>
+          </table>
+          <p className="px-4 py-3 text-xs text-slate-400">Incluye retenciones IRPF de facturas emitidas con retencion y las practicadas en nominas del trimestre.</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════
+// MODULO 3: FACTURAS RECURRENTES
+// ════════════════════════════════════════════════════════════
+function dbToRecurrente(r) {
+  return {
+    ...r,
+    retencionPct: r.retencion_pct ?? 0,
+    aplicarRecargo: r.aplicar_recargo ?? false,
+    lineas: r.lineas || [],
+    proximaFecha: r.proxima_fecha || null,
+    activa: r.activa ?? true,
+  };
+}
+
+function RecurrenteForm({ actividades, onSave, onCancel, initial, contactos=[] }) {
+  const hoy = new Date().toISOString().slice(0,10);
+  const [f, setF] = React.useState(initial || {
+    nombre:"", tipo:"venta", cliente:"", nif:"", actividad: actividades[0]||"",
+    lineas:[{ id:1, descripcion:"", cantidad:1, precio:0, iva:21 }],
+    retencionPct:0, aplicarRecargo:false,
+    frecuencia:"mensual", diaGeneracion:1, proximaFecha: hoy, activa:true, notas:""
+  });
+  const set = (k,v) => setF(p => ({...p,[k]:v}));
+
+  const handleSave = () => {
+    if (!f.nombre.trim()) { alert("Nombre de plantilla obligatorio."); return; }
+    if (!f.cliente.trim()) { alert("Cliente/proveedor obligatorio."); return; }
+    onSave(f);
+  };
+
+  const calcP = calcFactura(f.lineas||[], f.retencionPct||0, f.aplicarRecargo||false);
+
+  return (
+    <div className="p-6 max-w-2xl mx-auto space-y-5">
+      <div className="flex items-center justify-between">
+        <h2 className="text-xl font-bold text-slate-800">{initial?"Editar plantilla":"Nueva factura recurrente"}</h2>
+        <button onClick={onCancel} className="text-slate-400 hover:text-slate-600 text-2xl leading-none">&times;</button>
+      </div>
+
+      <div className="bg-white rounded-xl border border-slate-200 p-5 space-y-4">
+        <div className="grid grid-cols-2 gap-3">
+          <div className="col-span-2">
+            <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Nombre de la plantilla *</label>
+            <input className="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm" value={f.nombre} onChange={e=>set("nombre",e.target.value)} placeholder="Ej: Cuota mensual cliente X"/>
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Tipo</label>
+            <select className="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm" value={f.tipo} onChange={e=>set("tipo",e.target.value)}>
+              <option value="venta">Venta (emitida)</option>
+              <option value="gasto">Gasto (recibida)</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Actividad</label>
+            <select className="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm" value={f.actividad} onChange={e=>set("actividad",e.target.value)}>
+              {actividades.map(a => <option key={a}>{a}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">{f.tipo==="venta"?"Cliente":"Proveedor"} *</label>
+            <input className="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm" value={f.cliente} onChange={e=>set("cliente",e.target.value)}/>
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">NIF/CIF</label>
+            <input className="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm" value={f.nif||""} onChange={e=>set("nif",e.target.value)}/>
+          </div>
+        </div>
+
+        {/* Lineas */}
+        <div>
+          <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Lineas de factura</label>
+          <div className="mt-2 space-y-2">
+            {(f.lineas||[]).map((l,i) => (
+              <div key={l.id} className="grid grid-cols-12 gap-1 items-center">
+                <input className="col-span-5 border border-slate-200 rounded-lg px-2 py-1.5 text-xs" placeholder="Descripcion" value={l.descripcion} onChange={e=>{const ls=[...f.lineas];ls[i]={...ls[i],descripcion:e.target.value};set("lineas",ls);}}/>
+                <input className="col-span-2 border border-slate-200 rounded-lg px-2 py-1.5 text-xs text-right" type="number" placeholder="Cant." value={l.cantidad} onChange={e=>{const ls=[...f.lineas];ls[i]={...ls[i],cantidad:parseFloat(e.target.value)||1};set("lineas",ls);}}/>
+                <input className="col-span-2 border border-slate-200 rounded-lg px-2 py-1.5 text-xs text-right" type="number" placeholder="Precio" value={l.precio} onChange={e=>{const ls=[...f.lineas];ls[i]={...ls[i],precio:parseFloat(e.target.value)||0};set("lineas",ls);}}/>
+                <select className="col-span-2 border border-slate-200 rounded-lg px-1 py-1.5 text-xs" value={l.iva} onChange={e=>{const ls=[...f.lineas];ls[i]={...ls[i],iva:parseInt(e.target.value)};set("lineas",ls);}}>
+                  {[0,4,10,21].map(v=><option key={v} value={v}>{v}%</option>)}
+                </select>
+                <button className="col-span-1 text-rose-400 hover:text-rose-600 text-lg leading-none text-center" onClick={()=>set("lineas",f.lineas.filter((_,j)=>j!==i))}>-</button>
+              </div>
+            ))}
+            <button onClick={()=>set("lineas",[...(f.lineas||[]),{id:Date.now(),descripcion:"",cantidad:1,precio:0,iva:21}])}
+              className="text-xs text-blue-600 hover:text-blue-800 font-medium mt-1">+ Anadir linea</button>
+          </div>
+          <div className="mt-3 text-right text-sm text-slate-700">
+            Total: <span className="font-bold text-slate-900">{calcP.totalConIVA.toLocaleString("es-ES",{minimumFractionDigits:2})} EUR</span>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-3 gap-3 border-t border-slate-100 pt-4">
+          <div>
+            <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Frecuencia</label>
+            <select className="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm" value={f.frecuencia} onChange={e=>set("frecuencia",e.target.value)}>
+              <option value="mensual">Mensual</option>
+              <option value="trimestral">Trimestral</option>
+              <option value="anual">Anual</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Dia del mes</label>
+            <input type="number" min={1} max={28} className="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm" value={f.diaGeneracion||1} onChange={e=>set("diaGeneracion",parseInt(e.target.value)||1)}/>
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Proxima fecha</label>
+            <input type="date" className="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm" value={f.proximaFecha||""} onChange={e=>set("proximaFecha",e.target.value)}/>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex gap-3 justify-end">
+        <button onClick={onCancel} className="px-5 py-2.5 rounded-xl border border-slate-200 text-slate-600 text-sm hover:bg-slate-50">Cancelar</button>
+        <button onClick={handleSave} className="px-5 py-2.5 rounded-xl bg-slate-900 text-white text-sm hover:bg-slate-700">Guardar plantilla</button>
+      </div>
+    </div>
+  );
+}
+
+function VistaRecurrentes({ recurrentes, actividades, contactos, onNew, onEdit, onDelete, onGenerar }) {
+  const fmt = v => (v||0).toLocaleString("es-ES",{minimumFractionDigits:2,maximumFractionDigits:2});
+  const activas = recurrentes.filter(r=>r.activa);
+  const inactivas = recurrentes.filter(r=>!r.activa);
+
+  const Row = ({ r }) => {
+    const calc = calcFactura(r.lineas||[], r.retencionPct||0, r.aplicarRecargo||false);
+    const vence = r.proximaFecha ? new Date(r.proximaFecha) : null;
+    const hoy = new Date(); hoy.setHours(0,0,0,0);
+    const vencida = vence && vence < hoy;
+    return (
+      <tr className="border-b border-slate-100 hover:bg-slate-50">
+        <td className="py-3 px-4">
+          <div className="font-semibold text-slate-800">{r.nombre}</div>
+          <div className="text-xs text-slate-400">{r.cliente}</div>
+        </td>
+        <td className="py-3 px-4"><Tag color={r.tipo==="venta"?"green":"orange"}>{r.tipo==="venta"?"Venta":"Gasto"}</Tag></td>
+        <td className="py-3 px-4 text-sm text-slate-600 capitalize">{r.frecuencia}</td>
+        <td className="py-3 px-4 text-sm text-right font-mono text-slate-800">{fmt(calc.totalConIVA)} EUR</td>
+        <td className="py-3 px-4 text-sm">
+          {vence ? <span className={vencida?"text-rose-600 font-semibold":"text-slate-600"}>{vence.toLocaleDateString("es-ES")}</span> : "-"}
+        </td>
+        <td className="py-3 px-4">
+          <div className="flex gap-2 justify-end">
+            <button onClick={()=>onGenerar(r)} className="text-xs bg-emerald-100 text-emerald-700 hover:bg-emerald-200 px-3 py-1.5 rounded-lg font-medium">Generar</button>
+            <button onClick={()=>onEdit(r)} className="text-xs bg-slate-100 text-slate-700 hover:bg-slate-200 px-3 py-1.5 rounded-lg">Editar</button>
+            <button onClick={()=>onDelete(r.id)} className="text-xs bg-rose-50 text-rose-600 hover:bg-rose-100 px-3 py-1.5 rounded-lg">Borrar</button>
+          </div>
+        </td>
+      </tr>
+    );
+  };
+
+  return (
+    <div className="p-6 space-y-6">
+      <div className="flex justify-between items-center">
+        <div>
+          <h2 className="text-xl font-bold text-slate-800">Facturas Recurrentes</h2>
+          <p className="text-sm text-slate-500 mt-1">Plantillas para generar facturas periodicas con un clic.</p>
+        </div>
+        <button onClick={onNew} className="flex items-center gap-2 bg-slate-900 text-white px-4 py-2.5 rounded-xl text-sm font-medium hover:bg-slate-700">
+          <span className="text-lg leading-none">+</span> Nueva plantilla
+        </button>
+      </div>
+
+      {recurrentes.length === 0 && (
+        <div className="text-center py-16 text-slate-400">
+          <div className="text-4xl mb-3">🔄</div>
+          <p className="font-medium">Sin plantillas todavia</p>
+          <p className="text-sm mt-1">Crea una plantilla para generar facturas repetitivas sin trabajo manual.</p>
+        </div>
+      )}
+
+      {activas.length > 0 && (
+        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+          <div className="px-4 py-3 border-b border-slate-200 bg-slate-50">
+            <span className="text-sm font-semibold text-slate-700">Activas ({activas.length})</span>
+          </div>
+          <table className="w-full">
+            <thead><tr className="border-b border-slate-200">
+              <th className="py-2.5 px-4 text-left text-xs font-semibold text-slate-500 uppercase">Plantilla</th>
+              <th className="py-2.5 px-4 text-left text-xs font-semibold text-slate-500 uppercase">Tipo</th>
+              <th className="py-2.5 px-4 text-left text-xs font-semibold text-slate-500 uppercase">Frecuencia</th>
+              <th className="py-2.5 px-4 text-right text-xs font-semibold text-slate-500 uppercase">Importe</th>
+              <th className="py-2.5 px-4 text-left text-xs font-semibold text-slate-500 uppercase">Proxima</th>
+              <th className="py-2.5 px-4 text-right text-xs font-semibold text-slate-500 uppercase">Acciones</th>
+            </tr></thead>
+            <tbody>{activas.map(r=><Row key={r.id} r={r}/>)}</tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════
+// MODULO 4: ACTIVOS Y AMORTIZACIONES
+// ════════════════════════════════════════════════════════════
+const CATEGORIAS_ACTIVO = [
+  "Inmueble","Vehiculo","Maquinaria","Mobiliario","Equipo informatico",
+  "Software","Instalaciones","Herramientas","Otro"
+];
+const PCT_AMORT = {
+  "Inmueble":3,"Vehiculo":16,"Maquinaria":12,"Mobiliario":10,
+  "Equipo informatico":25,"Software":33,"Instalaciones":10,"Herramientas":20,"Otro":10
+};
+
+function dbToActivo(a) {
+  return {
+    ...a,
+    valorCompra: a.valor_compra ?? 0,
+    fechaCompra: a.fecha_compra || "",
+    vidaUtilAnios: a.vida_util_anios ?? 10,
+    pctAmortizacion: a.pct_amortizacion ?? 10,
+    valorResidual: a.valor_residual ?? 0,
+    activo: a.activo ?? true,
+  };
+}
+
+function calcAmortizacion(activo, anio) {
+  const anioCompra = parseInt((activo.fechaCompra||"").slice(0,4));
+  if (!anioCompra || anio < anioCompra) return { cuota:0, acumulada:0, valorNeto:0 };
+  const aniosTranscurridos = anio - anioCompra + 1;
+  const valorAmortizable = (activo.valorCompra||0) - (activo.valorResidual||0);
+  const cuota = valorAmortizable * ((activo.pctAmortizacion||10) / 100);
+  const acumulada = Math.min(cuota * aniosTranscurridos, valorAmortizable);
+  const valorNeto = Math.max((activo.valorCompra||0) - acumulada, activo.valorResidual||0);
+  return { cuota, acumulada, valorNeto };
+}
+
+function ActivoForm({ onSave, onCancel, initial }) {
+  const hoy = new Date().toISOString().slice(0,10);
+  const [a, setA] = React.useState(initial || {
+    nombre:"", descripcion:"", categoria:"Equipo informatico",
+    fechaCompra: hoy, valorCompra:0, vidaUtilAnios:4,
+    pctAmortizacion:25, valorResidual:0, activo:true, notas:""
+  });
+  const set = (k,v) => setA(p=>({...p,[k]:v}));
+
+  const handleCat = (cat) => {
+    const pct = PCT_AMORT[cat] || 10;
+    const vida = Math.round(100/pct);
+    setA(p=>({...p, categoria:cat, pctAmortizacion:pct, vidaUtilAnios:vida}));
+  };
+
+  const fmt = v => (v||0).toLocaleString("es-ES",{minimumFractionDigits:2});
+  const anioActual = new Date().getFullYear();
+  const amort = calcAmortizacion(a, anioActual);
+
+  return (
+    <div className="p-6 max-w-xl mx-auto space-y-5">
+      <div className="flex items-center justify-between">
+        <h2 className="text-xl font-bold text-slate-800">{initial?"Editar activo":"Nuevo activo"}</h2>
+        <button onClick={onCancel} className="text-slate-400 hover:text-slate-600 text-2xl leading-none">&times;</button>
+      </div>
+
+      <div className="bg-white rounded-xl border border-slate-200 p-5 space-y-4">
+        <div className="grid grid-cols-2 gap-3">
+          <div className="col-span-2">
+            <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Nombre del activo *</label>
+            <input className="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm" value={a.nombre} onChange={e=>set("nombre",e.target.value)} placeholder="Ej: Ordenador MacBook Pro"/>
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Categoria</label>
+            <select className="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm" value={a.categoria} onChange={e=>handleCat(e.target.value)}>
+              {CATEGORIAS_ACTIVO.map(c=><option key={c}>{c}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Fecha de compra</label>
+            <input type="date" className="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm" value={a.fechaCompra||""} onChange={e=>set("fechaCompra",e.target.value)}/>
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Valor de compra (EUR)</label>
+            <input type="number" className="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm" value={a.valorCompra||0} onChange={e=>set("valorCompra",parseFloat(e.target.value)||0)}/>
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Valor residual (EUR)</label>
+            <input type="number" className="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm" value={a.valorResidual||0} onChange={e=>set("valorResidual",parseFloat(e.target.value)||0)}/>
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">% Amortizacion anual</label>
+            <input type="number" className="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm" value={a.pctAmortizacion||10} onChange={e=>set("pctAmortizacion",parseFloat(e.target.value)||10)}/>
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Vida util (anos)</label>
+            <input type="number" className="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm" value={a.vidaUtilAnios||10} onChange={e=>set("vidaUtilAnios",parseInt(e.target.value)||10)}/>
+          </div>
+          <div className="col-span-2">
+            <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Notas</label>
+            <input className="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm" value={a.notas||""} onChange={e=>set("notas",e.target.value)} placeholder="Numero de serie, proveedor..."/>
+          </div>
+        </div>
+
+        {a.valorCompra > 0 && (
+          <div className="bg-blue-50 rounded-xl p-4 text-sm space-y-1">
+            <p className="font-semibold text-blue-800 text-xs uppercase tracking-wide">Calculo para {anioActual}</p>
+            <div className="flex justify-between text-slate-700"><span>Cuota anual:</span><span className="font-mono font-semibold">{fmt(amort.cuota)} EUR</span></div>
+            <div className="flex justify-between text-slate-700"><span>Amortizacion acumulada:</span><span className="font-mono">{fmt(amort.acumulada)} EUR</span></div>
+            <div className="flex justify-between text-slate-700"><span>Valor neto contable:</span><span className="font-mono font-semibold">{fmt(amort.valorNeto)} EUR</span></div>
+          </div>
+        )}
+      </div>
+
+      <div className="flex gap-3 justify-end">
+        <button onClick={onCancel} className="px-5 py-2.5 rounded-xl border border-slate-200 text-slate-600 text-sm hover:bg-slate-50">Cancelar</button>
+        <button onClick={()=>{ if(!a.nombre.trim()){alert("Nombre obligatorio.");return;} onSave(a); }}
+          className="px-5 py-2.5 rounded-xl bg-slate-900 text-white text-sm hover:bg-slate-700">Guardar activo</button>
+      </div>
+    </div>
+  );
+}
+
+function VistaActivos({ activos, onNew, onEdit, onDelete, periodYear }) {
+  const fmt = v => (v||0).toLocaleString("es-ES",{minimumFractionDigits:2,maximumFractionDigits:2});
+  const [tabActivos, setTabActivos] = React.useState("lista");
+
+  const amortAnual = activos.reduce((sum,a) => {
+    const am = calcAmortizacion(a, periodYear);
+    return sum + (am.cuota || 0);
+  }, 0);
+
+  const valorNeto = activos.reduce((sum,a) => {
+    const am = calcAmortizacion(a, periodYear);
+    return sum + (am.valorNeto || 0);
+  }, 0);
+
+  const valorCompraTotal = activos.reduce((s,a) => s + (a.valorCompra||0), 0);
+
+  return (
+    <div className="p-6 space-y-6">
+      <div className="flex justify-between items-center">
+        <div>
+          <h2 className="text-xl font-bold text-slate-800">Activos y Amortizaciones</h2>
+          <p className="text-sm text-slate-500 mt-1">Seguimiento del inmovilizado y calculo de amortizaciones segun tablas Hacienda.</p>
+        </div>
+        <button onClick={onNew} className="flex items-center gap-2 bg-slate-900 text-white px-4 py-2.5 rounded-xl text-sm font-medium hover:bg-slate-700">
+          <span className="text-lg leading-none">+</span> Nuevo activo
+        </button>
+      </div>
+
+      {/* KPIs */}
+      <div className="grid grid-cols-3 gap-4">
+        <div className="bg-white rounded-xl border border-slate-200 p-4">
+          <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Valor compra total</div>
+          <div className="text-2xl font-bold text-slate-800">{fmt(valorCompraTotal)} EUR</div>
+        </div>
+        <div className="bg-white rounded-xl border border-slate-200 p-4">
+          <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Amortizacion {periodYear}</div>
+          <div className="text-2xl font-bold text-rose-600">{fmt(amortAnual)} EUR</div>
+        </div>
+        <div className="bg-white rounded-xl border border-slate-200 p-4">
+          <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Valor neto contable</div>
+          <div className="text-2xl font-bold text-blue-700">{fmt(valorNeto)} EUR</div>
+        </div>
+      </div>
+
+      {/* Tabs */}
+      <div className="flex gap-1 bg-slate-100 rounded-xl p-1 w-fit">
+        {[["lista","Listado"],["tabla","Tabla amortizacion"]].map(([id,label])=>(
+          <button key={id} onClick={()=>setTabActivos(id)}
+            className={`py-1.5 px-4 rounded-lg text-sm font-medium transition-colors ${tabActivos===id?"bg-white shadow-sm text-slate-800":"text-slate-500 hover:text-slate-700"}`}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {activos.length === 0 && (
+        <div className="text-center py-16 text-slate-400">
+          <div className="text-4xl mb-3">🏢</div>
+          <p className="font-medium">Sin activos registrados</p>
+          <p className="text-sm mt-1">Registra tus equipos, vehiculos o instalaciones para calcular las amortizaciones.</p>
+        </div>
+      )}
+
+      {tabActivos === "lista" && activos.length > 0 && (
+        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+          <table className="w-full text-sm">
+            <thead><tr className="bg-slate-50 border-b border-slate-200">
+              <th className="py-2.5 px-4 text-left text-xs font-semibold text-slate-500 uppercase">Activo</th>
+              <th className="py-2.5 px-4 text-left text-xs font-semibold text-slate-500 uppercase">Categoria</th>
+              <th className="py-2.5 px-4 text-right text-xs font-semibold text-slate-500 uppercase">Valor compra</th>
+              <th className="py-2.5 px-4 text-right text-xs font-semibold text-slate-500 uppercase">% Amort.</th>
+              <th className="py-2.5 px-4 text-right text-xs font-semibold text-slate-500 uppercase">Cuota {periodYear}</th>
+              <th className="py-2.5 px-4 text-right text-xs font-semibold text-slate-500 uppercase">Valor neto</th>
+              <th className="py-2.5 px-4"/>
+            </tr></thead>
+            <tbody>
+              {activos.map(a => {
+                const am = calcAmortizacion(a, periodYear);
+                const totalizada = am.acumulada >= ((a.valorCompra||0) - (a.valorResidual||0));
+                return (
+                  <tr key={a.id} className="border-b border-slate-100 hover:bg-slate-50">
+                    <td className="py-3 px-4">
+                      <div className="font-semibold text-slate-800">{a.nombre}</div>
+                      {a.notas && <div className="text-xs text-slate-400">{a.notas}</div>}
+                    </td>
+                    <td className="py-3 px-4 text-slate-500">{a.categoria}</td>
+                    <td className="py-3 px-4 text-right font-mono text-slate-700">{fmt(a.valorCompra)}</td>
+                    <td className="py-3 px-4 text-right text-slate-600">{a.pctAmortizacion}%</td>
+                    <td className="py-3 px-4 text-right font-mono text-rose-600">{totalizada ? <span className="text-slate-400 text-xs">Amortizado</span> : fmt(am.cuota)}</td>
+                    <td className="py-3 px-4 text-right font-mono font-semibold text-blue-700">{fmt(am.valorNeto)}</td>
+                    <td className="py-3 px-4">
+                      <div className="flex gap-1 justify-end">
+                        <button onClick={()=>onEdit(a)} className="text-xs bg-slate-100 text-slate-600 hover:bg-slate-200 px-2.5 py-1 rounded-lg">Editar</button>
+                        <button onClick={()=>onDelete(a.id)} className="text-xs bg-rose-50 text-rose-600 hover:bg-rose-100 px-2.5 py-1 rounded-lg">Borrar</button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {tabActivos === "tabla" && activos.length > 0 && (
+        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+          <div className="px-4 py-3 border-b border-slate-200"><span className="font-semibold text-slate-700 text-sm">Plan de amortizacion por activo</span></div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs min-w-max">
+              <thead><tr className="bg-slate-50 border-b border-slate-200">
+                <th className="py-2 px-3 text-left font-semibold text-slate-600">Activo</th>
+                {Array.from({length:10},(_,i)=>periodYear-2+i).map(y=>(
+                  <th key={y} className={`py-2 px-3 text-right font-semibold ${y===periodYear?"text-blue-700":"text-slate-500"}`}>{y}</th>
+                ))}
+              </tr></thead>
+              <tbody>
+                {activos.map(a=>(
+                  <tr key={a.id} className="border-b border-slate-100">
+                    <td className="py-2 px-3 font-medium text-slate-700 max-w-32 truncate">{a.nombre}</td>
+                    {Array.from({length:10},(_,i)=>periodYear-2+i).map(y=>{
+                      const am = calcAmortizacion(a,y);
+                      const totalizada = am.acumulada >= ((a.valorCompra||0)-(a.valorResidual||0));
+                      return (
+                        <td key={y} className={`py-2 px-3 text-right font-mono ${y===periodYear?"text-blue-700 font-semibold":"text-slate-500"}`}>
+                          {am.cuota > 0 && !totalizada ? fmt(am.cuota) : totalizada && am.cuota > 0 ? <span className="text-slate-300">-</span> : <span className="text-slate-300">-</span>}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+                <tr className="bg-slate-50 font-bold border-t-2 border-slate-200">
+                  <td className="py-2 px-3 text-slate-700">TOTAL</td>
+                  {Array.from({length:10},(_,i)=>periodYear-2+i).map(y=>{
+                    const total = activos.reduce((s,a)=>s+(calcAmortizacion(a,y).cuota||0),0);
+                    return <td key={y} className={`py-2 px-3 text-right font-mono ${y===periodYear?"text-blue-700":"text-slate-600"}`}>{total>0?fmt(total):"-"}</td>;
+                  })}
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════
+// MODULO 5: LECTOR DE FACTURAS CON IA
+// ════════════════════════════════════════════════════════════
+function VistaLectorIA({ actividades, onFacturaExtraida }) {
+  const [archivo, setArchivo] = React.useState(null);
+  const [cargando, setCargando] = React.useState(false);
+  const [resultado, setResultado] = React.useState(null);
+  const [error, setError] = React.useState("");
+  const inputRef = React.useRef();
+
+  const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+  const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+  const handleArchivo = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const ok = ["image/jpeg","image/png","application/pdf"].includes(file.type);
+    if (!ok) { setError("Formato no soportado. Usa JPG, PNG o PDF."); return; }
+    if (file.size > 5*1024*1024) { setError("El archivo supera los 5 MB."); return; }
+    setArchivo(file); setError(""); setResultado(null);
+  };
+
+  const analizar = async () => {
+    if (!archivo) return;
+    setCargando(true); setError(""); setResultado(null);
+    try {
+      const b64 = await new Promise((res,rej)=>{
+        const r = new FileReader();
+        r.onload = ()=>res(r.result.split(",")[1]);
+        r.onerror = rej;
+        r.readAsDataURL(archivo);
+      });
+
+      const media = archivo.type === "application/pdf" ? "application/pdf" : archivo.type;
+      const tipo = archivo.type === "application/pdf" ? "document" : "image";
+
+      const prompt = `Eres un asistente contable especializado. Analiza esta factura y extrae TODOS los datos en formato JSON estricto, sin texto adicional, sin markdown.
+Devuelve exactamente este objeto:
+{
+  "numero": "numero de factura o vacio",
+  "fecha": "YYYY-MM-DD o vacio",
+  "tipo": "gasto",
+  "cliente": "nombre del emisor/proveedor",
+  "nif": "NIF o CIF del emisor",
+  "email": "",
+  "telefono": "",
+  "direccion": "",
+  "actividad": "${actividades[0]||"General"}",
+  "lineas": [
+    { "descripcion": "concepto", "cantidad": 1, "precio": 0.00, "iva": 21 }
+  ],
+  "retencionPct": 0,
+  "notas": ""
+}
+Solo devuelve el JSON. No expliques nada.`;
+
+      const body = {
+        model: "claude-sonnet-4-6",
+        max_tokens: 1024,
+        messages: [{
+          role: "user",
+          content: [
+            { type: tipo === "document" ? "document" : "image",
+              source: { type: "base64", media_type: media, data: b64 }
+            },
+            { type: "text", text: prompt }
+          ]
+        }]
+      };
+
+      const resp = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "anthropic-version": "2023-06-01" },
+        body: JSON.stringify(body)
+      });
+
+      if (!resp.ok) {
+        const err = await resp.json();
+        throw new Error(err.error?.message || "Error al llamar a la IA");
+      }
+
+      const data = await resp.json();
+      const texto = data.content.find(c=>c.type==="text")?.text || "";
+      const clean = texto.replace(/```json|```/g,"").trim();
+      const factura = JSON.parse(clean);
+      setResultado(factura);
+    } catch(e) {
+      setError("No se pudo procesar el archivo: " + e.message);
+    } finally {
+      setCargando(false);
+    }
+  };
+
+  const fmt = (lineas) => {
+    const total = (lineas||[]).reduce((s,l)=>{
+      const base = (l.cantidad||1)*(l.precio||0);
+      return s + base + base*(l.iva||0)/100;
+    },0);
+    return total.toLocaleString("es-ES",{minimumFractionDigits:2});
+  };
+
+  return (
+    <div className="p-6 max-w-2xl mx-auto space-y-6">
+      <div>
+        <h2 className="text-xl font-bold text-slate-800">Lector de Facturas con IA</h2>
+        <p className="text-sm text-slate-500 mt-1">Sube una factura en PDF o imagen y la IA extrae todos los datos automaticamente.</p>
+      </div>
+
+      {/* Upload */}
+      <div
+        className="border-2 border-dashed border-slate-300 rounded-2xl p-10 text-center cursor-pointer hover:border-blue-400 hover:bg-blue-50 transition-colors"
+        onClick={()=>inputRef.current?.click()}
+        onDragOver={e=>{e.preventDefault();}}
+        onDrop={e=>{e.preventDefault();const f=e.dataTransfer.files[0];if(f){handleArchivo({target:{files:[f]}})}}}
+      >
+        <input ref={inputRef} type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden" onChange={handleArchivo}/>
+        {archivo ? (
+          <div className="space-y-2">
+            <div className="text-3xl">📄</div>
+            <p className="font-semibold text-slate-700">{archivo.name}</p>
+            <p className="text-xs text-slate-400">{(archivo.size/1024).toFixed(0)} KB</p>
+            <button className="text-xs text-slate-400 hover:text-rose-500 underline" onClick={e=>{e.stopPropagation();setArchivo(null);setResultado(null);}}>Cambiar archivo</button>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <div className="text-3xl text-slate-300">📂</div>
+            <p className="font-medium text-slate-600">Arrastra aqui o haz clic para seleccionar</p>
+            <p className="text-xs text-slate-400">PDF, JPG o PNG - Maximo 5 MB</p>
+          </div>
+        )}
+      </div>
+
+      {error && <p className="text-sm text-rose-600 bg-rose-50 px-4 py-3 rounded-xl">{error}</p>}
+
+      {archivo && !cargando && !resultado && (
+        <button onClick={analizar} className="w-full bg-slate-900 text-white py-3 rounded-xl font-semibold hover:bg-slate-700 transition-colors">
+          Analizar con IA
+        </button>
+      )}
+
+      {cargando && (
+        <div className="text-center py-8 space-y-3">
+          <div className="inline-block w-8 h-8 border-4 border-slate-200 border-t-slate-800 rounded-full animate-spin"/>
+          <p className="text-slate-600">Analizando la factura...</p>
+        </div>
+      )}
+
+      {resultado && (
+        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+          <div className="flex items-center justify-between px-4 py-3 bg-emerald-50 border-b border-emerald-100">
+            <span className="text-sm font-semibold text-emerald-800">Datos extraidos correctamente</span>
+            <span className="text-xs text-emerald-600">Revisa y confirma antes de guardar</span>
+          </div>
+          <div className="p-4 space-y-3 text-sm">
+            <div className="grid grid-cols-2 gap-2">
+              {[
+                ["Proveedor", resultado.cliente],
+                ["NIF/CIF", resultado.nif],
+                ["Numero factura", resultado.numero],
+                ["Fecha", resultado.fecha],
+              ].map(([k,v])=>(
+                <div key={k} className="bg-slate-50 rounded-lg p-2.5">
+                  <div className="text-xs text-slate-400 mb-0.5">{k}</div>
+                  <div className="font-medium text-slate-800">{v||"-"}</div>
+                </div>
+              ))}
+            </div>
+            <div>
+              <div className="text-xs text-slate-400 mb-1">Lineas ({(resultado.lineas||[]).length})</div>
+              {(resultado.lineas||[]).map((l,i)=>(
+                <div key={i} className="flex justify-between text-xs text-slate-600 py-1 border-b border-slate-100">
+                  <span className="truncate max-w-xs">{l.descripcion}</span>
+                  <span className="font-mono ml-4">{l.cantidad} x {(l.precio||0).toFixed(2)} EUR + {l.iva}% IVA</span>
+                </div>
+              ))}
+              <div className="text-right font-bold text-slate-800 mt-2">Total: {fmt(resultado.lineas)} EUR</div>
+            </div>
+          </div>
+          <div className="px-4 py-3 border-t border-slate-200 flex gap-3">
+            <button onClick={()=>{setResultado(null);setArchivo(null);}} className="flex-1 py-2 rounded-xl border border-slate-200 text-slate-600 text-sm hover:bg-slate-50">Descartar</button>
+            <button onClick={()=>onFacturaExtraida(resultado)} className="flex-1 py-2 rounded-xl bg-emerald-600 text-white text-sm hover:bg-emerald-700 font-semibold">Crear factura con estos datos</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════
 // HELPERS: normalizar filas de DB → objetos que usa la UI
 // ════════════════════════════════════════════════════════════
 function dbToFactura(f) {
@@ -4001,6 +5040,8 @@ function dbToFactura(f) {
     notas:           f.notas    || "",
     documento_url:   f.documento_url    || null,
     documento_nombre:f.documento_nombre || null,
+    ibanEmpresa:     f.iban_empresa     || f.ibanEmpresa  || "",
+    bancoEmpresa:    f.banco_empresa    || f.bancoEmpresa || "",
   };
 }
 
@@ -4150,7 +5191,9 @@ function ContaAutoApp() {
   const [trabajadores,  setTrabajadores] = useState([]);
   const [nominas,       setNominas]      = useState([]);
   const [actividades,   setActividades]  = useState(ACTS_INIT);
-  const [logo,          setLogo]         = useState(LOGO_EMPRESA); // logotipo Digital Conect
+  const [logo,          setLogo]         = useState(LOGO_EMPRESA);
+  const [activos,       setActivos]      = useState([]);
+  const [recurrentes,   setRecurrentes]  = useState([]); // logotipo Digital Conect
 
   const [pantallaBienvenida, setPantallaBienvenida] = useState(false);
   const [view,       setView]       = useState("dashboard");
@@ -4190,11 +5233,13 @@ function ContaAutoApp() {
       supabase.from("contactos").select("*").eq("user_id", uid).order("nombre"),
       supabase.from("trabajadores").select("*").eq("user_id", uid).order("nombre"),
       supabase.from("nominas").select("*").eq("user_id", uid).order("anio", { ascending: false }),
+      supabase.from("activos").select("*").eq("user_id", uid).order("fecha_compra", { ascending: false }),
+      supabase.from("recurrentes").select("*").eq("user_id", uid).order("proxima_fecha"),
     ]);
     if (rf.error) console.error("Error cargando facturas:", rf.error.message);
     if (rc.error) console.error("Error cargando contactos:", rc.error.message);
     if (rt.error) console.error("Error cargando trabajadores:", rt.error.message);
-    if (rn.error) console.error("Error cargando nóminas:", rn.error.message);
+    if (rn.error) console.error("Error cargando nominas:", rn.error.message);
     if (rf.data) setFacturas(rf.data.map(dbToFactura));
     if (rc.data) setContactos(rc.data);
     if (rt.data) setTrabajadores(rt.data.map(dbToTrabajador));
@@ -4202,6 +5247,12 @@ function ContaAutoApp() {
       const trabajadoresData = rt.data || [];
       setNominas(rn.data.map(n => dbToNomina(n, trabajadoresData)));
     }
+    const [,,,,ra,rr] = arguments.length > 0 ? [[],[],[],[],{data:null},{data:null}] : [];
+    // activos y recurrentes ya incluidos en Promise.all
+    const _ra = await supabase.from("activos").select("*").eq("user_id", uid);
+    const _rr = await supabase.from("recurrentes").select("*").eq("user_id", uid);
+    if (_ra.data) setActivos(_ra.data.map(dbToActivo));
+    if (_rr.data) setRecurrentes(_rr.data.map(dbToRecurrente));
   }, [user]);
 
   useEffect(() => { cargarDatos(); }, [cargarDatos]);
@@ -4217,6 +5268,8 @@ function ContaAutoApp() {
       cliente_email: f.email || f.clienteEmail || f.cliente_email || "",
       cliente_telefono: f.telefono || f.clienteTelefono || f.cliente_telefono || "",
       cliente_direccion: f.direccion || f.clienteDireccion || f.cliente_direccion || "",
+      iban_empresa: f.ibanEmpresa || f.iban_empresa || "",
+      banco_empresa: f.bancoEmpresa || f.banco_empresa || "",
       lineas: f.lineas || [],
       retencion_pct: f.retencionPct ?? f.retencion_pct ?? 0,
       aplicar_recargo: f.aplicarRecargo ?? f.aplicar_recargo ?? false,
@@ -4331,6 +5384,91 @@ function ContaAutoApp() {
     const { error } = await supabase.from("nominas").delete().eq("id", id);
     if (error) { alert("Error al eliminar: " + error.message); return; }
     setNominas(p => p.filter(n => n.id !== id));
+  };
+
+  // ── Activos ───────────────────────────────────────────
+  const saveActivo = async (a) => {
+    const uid = user?.id;
+    const row = {
+      user_id: uid, nombre: a.nombre, descripcion: a.descripcion || "",
+      categoria: a.categoria, fecha_compra: a.fechaCompra || a.fecha_compra || null,
+      valor_compra: a.valorCompra ?? a.valor_compra ?? 0,
+      vida_util_anios: a.vidaUtilAnios ?? a.vida_util_anios ?? 10,
+      pct_amortizacion: a.pctAmortizacion ?? a.pct_amortizacion ?? 10,
+      valor_residual: a.valorResidual ?? a.valor_residual ?? 0,
+      activo: a.activo ?? true, notas: a.notas || "",
+    };
+    if (editing) {
+      const { data, error } = await supabase.from("activos").update(row).eq("id", editing.id).select().single();
+      if (error) { alert("Error al guardar: " + error.message); return; }
+      if (data) setActivos(p => p.map(x => x.id === editing.id ? dbToActivo(data) : x));
+    } else {
+      const { data, error } = await supabase.from("activos").insert(row).select().single();
+      if (error) { alert("Error al guardar: " + error.message); return; }
+      if (data) setActivos(p => [...p, dbToActivo(data)]);
+    }
+    closeForm(); setView("activos");
+  };
+  const delActivo = async (id) => {
+    if (!confirm("¿Eliminar activo?")) return;
+    const { error } = await supabase.from("activos").delete().eq("id", id);
+    if (error) { alert("Error al eliminar: " + error.message); return; }
+    setActivos(p => p.filter(a => a.id !== id));
+  };
+
+  // ── Recurrentes ───────────────────────────────────────
+  const saveRecurrente = async (r) => {
+    const uid = user?.id;
+    const row = {
+      user_id: uid, nombre: r.nombre, tipo: r.tipo,
+      cliente: r.cliente, nif: r.nif || "",
+      actividad: r.actividad || "",
+      lineas: r.lineas || [],
+      retencion_pct: r.retencionPct ?? r.retencion_pct ?? 0,
+      aplicar_recargo: r.aplicarRecargo ?? r.aplicar_recargo ?? false,
+      frecuencia: r.frecuencia || "mensual",
+      dia_generacion: r.diaGeneracion ?? r.dia_generacion ?? 1,
+      proxima_fecha: r.proximaFecha || r.proxima_fecha || null,
+      activa: r.activa ?? true, notas: r.notas || "",
+    };
+    if (editing) {
+      const { data, error } = await supabase.from("recurrentes").update(row).eq("id", editing.id).select().single();
+      if (error) { alert("Error al guardar: " + error.message); return; }
+      if (data) setRecurrentes(p => p.map(x => x.id === editing.id ? dbToRecurrente(data) : x));
+    } else {
+      const { data, error } = await supabase.from("recurrentes").insert(row).select().single();
+      if (error) { alert("Error al guardar: " + error.message); return; }
+      if (data) setRecurrentes(p => [...p, dbToRecurrente(data)]);
+    }
+    closeForm(); setView("recurrentes");
+  };
+  const delRecurrente = async (id) => {
+    if (!confirm("¿Eliminar plantilla?")) return;
+    const { error } = await supabase.from("recurrentes").delete().eq("id", id);
+    if (error) { alert("Error al eliminar: " + error.message); return; }
+    setRecurrentes(p => p.filter(r => r.id !== id));
+  };
+  const generarDesdeRecurrente = async (r) => {
+    // Calcular proxima fecha segun frecuencia
+    const hoy = new Date().toISOString().slice(0,10);
+    let proxima = new Date(r.proximaFecha || hoy);
+    if (r.frecuencia === "mensual") proxima.setMonth(proxima.getMonth()+1);
+    else if (r.frecuencia === "trimestral") proxima.setMonth(proxima.getMonth()+3);
+    else proxima.setFullYear(proxima.getFullYear()+1);
+    // Actualizar proxima fecha en DB
+    await supabase.from("recurrentes").update({ proxima_fecha: proxima.toISOString().slice(0,10) }).eq("id", r.id);
+    setRecurrentes(p => p.map(x => x.id===r.id ? {...x, proximaFecha: proxima.toISOString().slice(0,10)} : x));
+    // Pre-rellenar el formulario de nueva factura con los datos de la plantilla
+    const nueva = {
+      tipo: r.tipo, cliente: r.cliente, nif: r.nif, actividad: r.actividad,
+      lineas: r.lineas, retencionPct: r.retencionPct, aplicarRecargo: r.aplicarRecargo,
+      fecha: hoy, notas: r.notas || "",
+    };
+    setEditing(null);
+    setSubview("new-factura-from-template");
+    setView("nueva");
+    // Store the template data to pre-fill
+    window.__plantillaRecurrente = nueva;
   };
 
   const vCount = facturas.filter(f=>f.tipo==="venta").length;
@@ -4541,6 +5679,10 @@ function ContaAutoApp() {
             {subview==="new-nomina"        && <NominaForm trabajadores={trabajadores.filter(t=>t.activo)} onSave={saveNomina} onCancel={closeForm}/>}
             {subview==="edit-nomina"       && <NominaForm trabajadores={trabajadores.filter(t=>t.activo)} onSave={saveNomina} onCancel={closeForm} initial={editing}/>}
             {subview==="edit-factura"      && <FacturaForm actividades={actividades} facturas={facturas} onSave={saveFactura} onCancel={closeForm} initial={editing} logo={logo} setLogo={setLogo} contactos={contactos} userId={user?.id}/>}
+            {subview==="new-activo"       && <ActivoForm onSave={saveActivo} onCancel={closeForm}/>}
+            {subview==="edit-activo"      && <ActivoForm onSave={saveActivo} onCancel={closeForm} initial={editing}/>}
+            {subview==="new-recurrente"   && <RecurrenteForm actividades={actividades} onSave={saveRecurrente} onCancel={closeForm} contactos={contactos}/>}
+            {subview==="edit-recurrente"  && <RecurrenteForm actividades={actividades} onSave={saveRecurrente} onCancel={closeForm} initial={editing} contactos={contactos}/>}
 
             {!subview && view!=="nueva" && (
               <>
@@ -4555,6 +5697,11 @@ function ContaAutoApp() {
                 {view==="mod347"       && <Vista347 facturas={facturas} year={periodYear} availYears={availYears}/>}
                 {view==="contactos"    && <VistaContactos contactos={contactos} setContactos={setContactos} facturas={facturas} onView={f=>setViewing({tipo:"factura",data:f})}/>}
                 {view==="extracto"     && <VistaExtractoBancario facturas={facturas} nominas={nominas}/>}
+                {view==="tesoreria"   && <VistaTesoria facturas={facturas}/>}
+                {view==="modelos"     && <VistaModelos facturas={facturas} nominas={nominas} periodYear={periodYear}/>}
+                {view==="activos"     && <VistaActivos activos={activos} onNew={()=>{setEditing(null);setSubview("new-activo");}} onEdit={a=>{setEditing(a);setSubview("edit-activo");}} onDelete={delActivo} periodYear={periodYear}/>}
+                {view==="recurrentes" && <VistaRecurrentes recurrentes={recurrentes} actividades={actividades} contactos={contactos} onNew={()=>{setEditing(null);setSubview("new-recurrente");}} onEdit={r=>{setEditing(r);setSubview("edit-recurrente");}} onDelete={delRecurrente} onGenerar={generarDesdeRecurrente}/>}
+                {view==="lector"      && <VistaLectorIA actividades={actividades} onFacturaExtraida={f=>{window.__plantillaRecurrente=f;setEditing(null);setView("nueva");setSubview("nueva-gasto");}}/>}
               </>
             )}
 
