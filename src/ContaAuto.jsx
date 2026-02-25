@@ -4214,8 +4214,8 @@ function VistaModelos({ facturas, nominas, periodYear }) {
     });
     nominasTrim.forEach(n => {
       const c = calcNomina(n);
-      baseRetenida += c.salarioBruto || 0;
-      retenciones += c.irpf || 0;
+      baseRetenida += c.baseTotal || 0;
+      retenciones += c.irpfAmt || 0;
     });
     return { baseRetenida, retenciones };
   };
@@ -5228,7 +5228,7 @@ function ContaAutoApp() {
   const cargarDatos = useCallback(async () => {
     if (!user) return;
     const uid = user.id;
-    const [rf, rc, rt, rn] = await Promise.all([
+    const [rf, rc, rt, rn, ra, rr] = await Promise.all([
       supabase.from("facturas").select("*").eq("user_id", uid).order("fecha", { ascending: false }),
       supabase.from("contactos").select("*").eq("user_id", uid).order("nombre"),
       supabase.from("trabajadores").select("*").eq("user_id", uid).order("nombre"),
@@ -5240,6 +5240,8 @@ function ContaAutoApp() {
     if (rc.error) console.error("Error cargando contactos:", rc.error.message);
     if (rt.error) console.error("Error cargando trabajadores:", rt.error.message);
     if (rn.error) console.error("Error cargando nominas:", rn.error.message);
+    if (ra.error) console.error("Error cargando activos:", ra.error.message);
+    if (rr.error) console.error("Error cargando recurrentes:", rr.error.message);
     if (rf.data) setFacturas(rf.data.map(dbToFactura));
     if (rc.data) setContactos(rc.data);
     if (rt.data) setTrabajadores(rt.data.map(dbToTrabajador));
@@ -5247,12 +5249,8 @@ function ContaAutoApp() {
       const trabajadoresData = rt.data || [];
       setNominas(rn.data.map(n => dbToNomina(n, trabajadoresData)));
     }
-    const [,,,,ra,rr] = arguments.length > 0 ? [[],[],[],[],{data:null},{data:null}] : [];
-    // activos y recurrentes ya incluidos en Promise.all
-    const _ra = await supabase.from("activos").select("*").eq("user_id", uid);
-    const _rr = await supabase.from("recurrentes").select("*").eq("user_id", uid);
-    if (_ra.data) setActivos(_ra.data.map(dbToActivo));
-    if (_rr.data) setRecurrentes(_rr.data.map(dbToRecurrente));
+    if (ra.data) setActivos(ra.data.map(dbToActivo));
+    if (rr.data) setRecurrentes(rr.data.map(dbToRecurrente));
   }, [user]);
 
   useEffect(() => { cargarDatos(); }, [cargarDatos]);
