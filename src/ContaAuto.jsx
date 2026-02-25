@@ -4049,7 +4049,7 @@ function VistaTesoria({ facturas }) {
     // Plazo estimado: ventas 30 dias, gastos al momento
     venc.setDate(base.getDate() + (f.tipo === "venta" ? 30 : 7));
     const total = calcFactura(f.lineas || [], f.retencionPct || 0, f.aplicarRecargo || false);
-    const importe = f.tipo === "venta" ? (total.totalConIVA - (total.retencion || 0)) : total.totalConIVA;
+    const importe = f.tipo === "venta" ? (total.total - (total.totalRetencion || 0)) : total.total;
 
     let asignada = false;
     for (let i = 0; i < semanas.length; i++) {
@@ -4176,8 +4176,8 @@ function VistaModelos({ facturas, nominas, periodYear }) {
     let ivaRepercutido = 0, ivaDeducible = 0, baseRep = 0, baseDed = 0;
     factsTrim.forEach(f => {
       const calc = calcFactura(f.lineas||[], f.retencionPct||0, f.aplicarRecargo||false);
-      if (f.tipo === "venta") { ivaRepercutido += calc.totalIVA; baseRep += calc.baseTotal; }
-      else { ivaDeducible += calc.totalIVA; baseDed += calc.baseTotal; }
+      if (f.tipo === "venta") { ivaRepercutido += calc.totalIVA; baseRep += calc.totalBase; }
+      else { ivaDeducible += calc.totalIVA; baseDed += calc.totalBase; }
     });
     const resultado = ivaRepercutido - ivaDeducible;
     return { baseRep, ivaRepercutido, baseDed, ivaDeducible, resultado };
@@ -4188,8 +4188,8 @@ function VistaModelos({ facturas, nominas, periodYear }) {
     let ingresos = 0, gastos = 0;
     factsTrim.forEach(f => {
       const calc = calcFactura(f.lineas||[], 0, false);
-      if (f.tipo === "venta") ingresos += calc.baseTotal;
-      else gastos += calc.baseTotal;
+      if (f.tipo === "venta") ingresos += calc.totalBase;
+      else gastos += calc.totalBase;
     });
     const rendimiento = ingresos - gastos;
     const pago = Math.max(0, rendimiento * 0.20);
@@ -4202,8 +4202,8 @@ function VistaModelos({ facturas, nominas, periodYear }) {
     factsTrim.forEach(f => {
       if (f.tipo === "venta" && (f.retencionPct||0) > 0) {
         const calc = calcFactura(f.lineas||[], f.retencionPct, false);
-        baseRetenida += calc.baseTotal;
-        retenciones += calc.retencion || 0;
+        baseRetenida += calc.totalBase;
+        retenciones += calc.totalRetencion || 0;
       }
     });
     // Retenciones de nominas del trimestre
@@ -4455,7 +4455,7 @@ function RecurrenteForm({ actividades, onSave, onCancel, initial, contactos=[] }
               className="text-xs text-blue-600 hover:text-blue-800 font-medium mt-1">+ Anadir linea</button>
           </div>
           <div className="mt-3 text-right text-sm text-slate-700">
-            Total: <span className="font-bold text-slate-900">{calcP.totalConIVA.toLocaleString("es-ES",{minimumFractionDigits:2})} EUR</span>
+            Total: <span className="font-bold text-slate-900">{calcP.total.toLocaleString("es-ES",{minimumFractionDigits:2})} EUR</span>
           </div>
         </div>
 
@@ -4505,7 +4505,7 @@ function VistaRecurrentes({ recurrentes, actividades, contactos, onNew, onEdit, 
         </td>
         <td className="py-3 px-4"><Tag color={r.tipo==="venta"?"green":"orange"}>{r.tipo==="venta"?"Venta":"Gasto"}</Tag></td>
         <td className="py-3 px-4 text-sm text-slate-600 capitalize">{r.frecuencia}</td>
-        <td className="py-3 px-4 text-sm text-right font-mono text-slate-800">{fmt(calc.totalConIVA)} EUR</td>
+        <td className="py-3 px-4 text-sm text-right font-mono text-slate-800">{fmt(calc.total)} EUR</td>
         <td className="py-3 px-4 text-sm">
           {vence ? <span className={vencida?"text-rose-600 font-semibold":"text-slate-600"}>{vence.toLocaleDateString("es-ES")}</span> : "-"}
         </td>
@@ -5695,11 +5695,11 @@ function ContaAutoApp() {
                 {view==="mod347"       && <Vista347 facturas={facturas} year={periodYear} availYears={availYears}/>}
                 {view==="contactos"    && <VistaContactos contactos={contactos} setContactos={setContactos} facturas={facturas} onView={f=>setViewing({tipo:"factura",data:f})}/>}
                 {view==="extracto"     && <VistaExtractoBancario facturas={facturas} nominas={nominas}/>}
-                {view==="tesoreria"   && <VistaTesoria facturas={facturas}/>}
-                {view==="modelos"     && <VistaModelos facturas={facturas} nominas={nominas} periodYear={periodYear}/>}
-                {view==="activos"     && <VistaActivos activos={activos} onNew={()=>{setEditing(null);setSubview("new-activo");}} onEdit={a=>{setEditing(a);setSubview("edit-activo");}} onDelete={delActivo} periodYear={periodYear}/>}
-                {view==="recurrentes" && <VistaRecurrentes recurrentes={recurrentes} actividades={actividades} contactos={contactos} onNew={()=>{setEditing(null);setSubview("new-recurrente");}} onEdit={r=>{setEditing(r);setSubview("edit-recurrente");}} onDelete={delRecurrente} onGenerar={generarDesdeRecurrente}/>}
-                {view==="lector"      && <VistaLectorIA actividades={actividades} onFacturaExtraida={f=>{window.__plantillaRecurrente=f;setEditing(null);setView("nueva");setSubview("nueva-gasto");}}/>}
+                {view==="tesoreria"   && <SafeView name="Tesoreria"><VistaTesoria facturas={facturas}/></SafeView>}
+                {view==="modelos"     && <SafeView name="Modelos Hacienda"><VistaModelos facturas={facturas} nominas={nominas} periodYear={periodYear}/></SafeView>}
+                {view==="activos"     && <SafeView name="Activos"><VistaActivos activos={activos} onNew={()=>{setEditing(null);setSubview("new-activo");}} onEdit={a=>{setEditing(a);setSubview("edit-activo");}} onDelete={delActivo} periodYear={periodYear}/></SafeView>}
+                {view==="recurrentes" && <SafeView name="Recurrentes"><VistaRecurrentes recurrentes={recurrentes} actividades={actividades} contactos={contactos} onNew={()=>{setEditing(null);setSubview("new-recurrente");}} onEdit={r=>{setEditing(r);setSubview("edit-recurrente");}} onDelete={delRecurrente} onGenerar={generarDesdeRecurrente}/></SafeView>}
+                {view==="lector"      && <SafeView name="Lector Facturas"><VistaLectorIA actividades={actividades} onFacturaExtraida={f=>{window.__plantillaRecurrente=f;setEditing(null);setView("nueva");setSubview("nueva-gasto");}}/></SafeView>}
               </>
             )}
 
@@ -5727,6 +5727,26 @@ function ContaAutoApp() {
       )}
     </div>
   );
+}
+
+class SafeView extends React.Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(e) { return { error: e }; }
+  componentDidCatch(e, info) { console.error("[SafeView]", this.props.name, e, info); }
+  render() {
+    if (this.state.error) {
+      return (
+        <div style={{padding:"40px 24px",fontFamily:"monospace"}}>
+          <div style={{background:"#fef2f2",border:"1px solid #fca5a5",borderRadius:12,padding:"20px 24px"}}>
+            <div style={{fontWeight:700,color:"#991b1b",fontSize:16,marginBottom:8}}>Error en: {this.props.name}</div>
+            <div style={{color:"#7f1d1d",fontSize:13,whiteSpace:"pre-wrap"}}>{this.state.error.message}</div>
+            <div style={{marginTop:12,fontSize:11,color:"#b91c1c"}}>Abre F12 → Console para ver el stack completo</div>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
 }
 
 export default function ContaAuto() {
