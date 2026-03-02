@@ -1092,12 +1092,16 @@ function ClienteAutocomplete({ value, nif, onChange, contactos=[], label="Client
 // VISTA DIRECTORIO DE CONTACTOS
 // ════════════════════════════════════════════════════════════
 
-function VistaContactos({ contactos, setContactos, facturas, onView }) {
+function VistaContactos({ contactos, setContactos, facturas, onView, onSaveContacto, onDeleteContacto }) {
   const [search,    setSearch]    = useState("");
   const [filtroTipo, setFiltroTipo] = useState("todos");
-  const [editando,  setEditando]  = useState(null); // contacto en edición inline
+  const [editando,  setEditando]  = useState(null);
   const [form,      setForm]      = useState({});
   const [verFichaId, setVerFichaId] = useState(null);
+  const [showNewForm, setShowNewForm] = useState(false);
+  const [editFullId, setEditFullId] = useState(null);
+  const [newForm, setNewForm] = useState({ nombre:"", nif:"", tipo:"cliente", telefono:"", email:"", direccion:"", direccion_fiscal:"", codigo_postal:"", ciudad:"", provincia:"", iban:"", banco:"", persona_contacto:"", web:"", notas:"" });
+  const [saving, setSaving] = useState(false);
 
   const filtered = useMemo(() => {
     let list = [...contactos];
@@ -1109,13 +1113,10 @@ function VistaContactos({ contactos, setContactos, facturas, onView }) {
         (c.nif||"").toLowerCase().includes(q) ||
         (c.telefono||"").includes(q) ||
         (c.email||"").toLowerCase().includes(q) ||
-        // búsqueda por producto (descripción en sus facturas)
         facturas.filter(f => f.cliente.toLowerCase() === c.nombre.toLowerCase())
           .some(f => f.lineas.some(l => l.descripcion.toLowerCase().includes(q))) ||
-        // búsqueda por importe
         facturas.filter(f => f.cliente.toLowerCase() === c.nombre.toLowerCase())
           .some(f => String(calcFactura(f.lineas,f.retencionPct,f.aplicarRecargo).total).includes(q)) ||
-        // búsqueda por fecha
         facturas.filter(f => f.cliente.toLowerCase() === c.nombre.toLowerCase())
           .some(f => f.fecha.includes(q))
       );
@@ -1125,13 +1126,56 @@ function VistaContactos({ contactos, setContactos, facturas, onView }) {
 
   const startEdit = (c) => { setEditando(c.id); setForm({...c}); };
   const cancelEdit = () => { setEditando(null); setForm({}); };
-  const saveEdit = () => {
-    setContactos(p => p.map(c => c.id === editando ? { ...c, ...form } : c));
+  const saveEdit = async () => {
+    const updated = { ...contactos.find(c => c.id === editando), ...form };
+    if (onSaveContacto) {
+      setSaving(true);
+      const saved = await onSaveContacto(updated);
+      setContactos(p => p.map(c => c.id === editando ? saved : c));
+      setSaving(false);
+    } else {
+      setContactos(p => p.map(c => c.id === editando ? updated : c));
+    }
     setEditando(null);
   };
-  const deleteContact = (id) => {
+  const deleteContact = async (id) => {
     if (!confirm("¿Eliminar este contacto del directorio?")) return;
-    setContactos(p => p.filter(c => c.id !== id));
+    if (onDeleteContacto) {
+      const ok = await onDeleteContacto(id);
+      if (ok) setContactos(p => p.filter(c => c.id !== id));
+    } else {
+      setContactos(p => p.filter(c => c.id !== id));
+    }
+  };
+
+  const openEditFull = (c) => {
+    setEditFullId(c.id);
+    setNewForm({ nombre: c.nombre||"", nif: c.nif||"", tipo: c.tipo||"cliente", telefono: c.telefono||"", email: c.email||"", direccion: c.direccion||"", direccion_fiscal: c.direccion_fiscal||"", codigo_postal: c.codigo_postal||"", ciudad: c.ciudad||"", provincia: c.provincia||"", iban: c.iban||"", banco: c.banco||"", persona_contacto: c.persona_contacto||"", web: c.web||"", notas: c.notas||"" });
+    setShowNewForm(true);
+  };
+
+  const resetNewForm = () => {
+    setNewForm({ nombre:"", nif:"", tipo:"cliente", telefono:"", email:"", direccion:"", direccion_fiscal:"", codigo_postal:"", ciudad:"", provincia:"", iban:"", banco:"", persona_contacto:"", web:"", notas:"" });
+    setEditFullId(null);
+  };
+
+  const handleNewContact = async () => {
+    if (!newForm.nombre.trim()) { alert("El nombre es obligatorio"); return; }
+    setSaving(true);
+    if (onSaveContacto) {
+      const toSave = editFullId ? { ...newForm, id: editFullId } : newForm;
+      const saved = await onSaveContacto(toSave);
+      if (saved && saved.id) {
+        if (editFullId) {
+          setContactos(p => p.map(c => c.id === editFullId ? saved : c));
+        } else {
+          setContactos(p => [...p, saved]);
+        }
+      }
+    }
+    setSaving(false);
+    setShowNewForm(false);
+    resetNewForm();
   };
 
   const fichaContacto = verFichaId ? contactos.find(c => c.id === verFichaId) : null;
@@ -1146,8 +1190,89 @@ function VistaContactos({ contactos, setContactos, facturas, onView }) {
     return <Tag color="violet">Cliente y proveedor</Tag>;
   };
 
+  const Campo = ({ label, field, placeholder, type="text", mono=false, area=false }) => (
+    <div>
+      <label className="block text-xs font-semibold text-gray-600 mb-1">{label}</label>
+      {area ? (
+        <textarea className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-slate-300 outline-none resize-none" rows={2}
+          placeholder={placeholder} value={newForm[field]||""} onChange={e => setNewForm(p => ({...p,[field]:e.target.value}))}/>
+      ) : (
+        <input type={type} className={`w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-slate-300 outline-none ${mono?"font-mono":""}`}
+          placeholder={placeholder} value={newForm[field]||""} onChange={e => setNewForm(p => ({...p,[field]:e.target.value}))}/>
+      )}
+    </div>
+  );
+
   return (
     <div className="space-y-5">
+      {/* Modal: Formulario nuevo/editar contacto */}
+      {showNewForm && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => { setShowNewForm(false); resetNewForm(); }}>
+          <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <div className="px-6 py-5 border-b border-gray-200 flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-black text-gray-900">{editFullId ? "Editar contacto" : "Nuevo contacto"}</h2>
+                <p className="text-xs text-gray-400 mt-0.5">Registra un cliente o proveedor con todos sus datos fiscales</p>
+              </div>
+              <button onClick={() => { setShowNewForm(false); resetNewForm(); }} className="text-gray-400 hover:text-gray-700 p-1 rounded-lg hover:bg-gray-100 text-lg font-bold">✕</button>
+            </div>
+            <div className="px-6 py-5 space-y-5">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <Campo label="Nombre / Razon social *" field="nombre" placeholder="Ej: Distribuciones Garcia SL"/>
+                <Campo label="NIF / CIF / DNI / NIE *" field="nif" placeholder="Ej: B12345678" mono/>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Tipo *</label>
+                  <select className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-slate-300 outline-none"
+                    value={newForm.tipo} onChange={e => setNewForm(p => ({...p, tipo:e.target.value}))}>
+                    <option value="cliente">Cliente</option>
+                    <option value="proveedor">Proveedor</option>
+                    <option value="ambos">Cliente y proveedor</option>
+                  </select>
+                </div>
+                <Campo label="Persona de contacto" field="persona_contacto" placeholder="Nombre del contacto"/>
+                <Campo label="Web" field="web" placeholder="www.ejemplo.com"/>
+              </div>
+              <div className="border-t border-gray-100 pt-4">
+                <div className="text-xs font-black uppercase tracking-widest text-gray-400 mb-3">Datos de contacto</div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <Campo label="Telefono" field="telefono" placeholder="Ej: 965 123 456" type="tel"/>
+                  <Campo label="Email" field="email" placeholder="email@ejemplo.com" type="email"/>
+                </div>
+              </div>
+              <div className="border-t border-gray-100 pt-4">
+                <div className="text-xs font-black uppercase tracking-widest text-gray-400 mb-3">Direccion fiscal</div>
+                <div className="grid grid-cols-1 gap-4">
+                  <Campo label="Direccion" field="direccion" placeholder="Calle, numero, piso..."/>
+                  <div className="grid grid-cols-3 gap-4">
+                    <Campo label="Codigo postal" field="codigo_postal" placeholder="03001"/>
+                    <Campo label="Ciudad" field="ciudad" placeholder="Alicante"/>
+                    <Campo label="Provincia" field="provincia" placeholder="Alicante"/>
+                  </div>
+                </div>
+              </div>
+              <div className="border-t border-gray-100 pt-4">
+                <div className="text-xs font-black uppercase tracking-widest text-gray-400 mb-3">Datos bancarios</div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <Campo label="IBAN" field="iban" placeholder="ES00 0000 0000 0000 0000 0000" mono/>
+                  <Campo label="Banco / Entidad" field="banco" placeholder="Nombre del banco"/>
+                </div>
+              </div>
+              <div className="border-t border-gray-100 pt-4">
+                <Campo label="Notas / Observaciones" field="notas" placeholder="Informacion adicional..." area/>
+              </div>
+            </div>
+            <div className="px-6 py-4 border-t border-gray-200 flex justify-end gap-3">
+              <button onClick={() => { setShowNewForm(false); resetNewForm(); }} className="px-5 py-2.5 text-sm font-semibold text-gray-600 border border-gray-200 rounded-xl hover:bg-gray-50">Cancelar</button>
+              <button onClick={handleNewContact} disabled={saving} className="px-6 py-2.5 text-sm font-black bg-emerald-600 text-white rounded-xl hover:bg-emerald-500 shadow-lg disabled:opacity-60">
+                {saving ? "Guardando..." : (editFullId ? "Actualizar contacto" : "Guardar contacto")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Ficha / historial */}
       {fichaContacto && (
         <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => setVerFichaId(null)}>
@@ -1162,11 +1287,20 @@ function VistaContactos({ contactos, setContactos, facturas, onView }) {
                   {fichaContacto.email && <span>{fichaContacto.email}</span>}
                 </div>
               </div>
-              <button onClick={() => setVerFichaId(null)} className="text-gray-400 hover:text-gray-700 p-1 rounded-lg hover:bg-gray-100 flex-shrink-0 text-lg font-bold">✕</button>
+              <div className="flex gap-2 flex-shrink-0">
+                <button onClick={() => { setVerFichaId(null); openEditFull(fichaContacto); }} className="text-xs font-bold text-amber-600 hover:text-amber-800 px-3 py-1.5 rounded-lg hover:bg-amber-50 border border-amber-200">Editar</button>
+                <button onClick={() => setVerFichaId(null)} className="text-gray-400 hover:text-gray-700 p-1 rounded-lg hover:bg-gray-100 text-lg font-bold">✕</button>
+              </div>
             </div>
-            {fichaContacto.direccion && (
-              <div className="px-6 pt-3 pb-1 text-xs text-gray-500">{fichaContacto.direccion}</div>
-            )}
+            <div className="px-6 py-3 grid grid-cols-2 gap-x-6 gap-y-1.5 text-xs border-b border-gray-100">
+              {fichaContacto.persona_contacto && <div><span className="text-gray-400">Contacto:</span> <span className="text-gray-700">{fichaContacto.persona_contacto}</span></div>}
+              {fichaContacto.direccion && <div><span className="text-gray-400">Direccion:</span> <span className="text-gray-700">{fichaContacto.direccion}</span></div>}
+              {(fichaContacto.ciudad || fichaContacto.codigo_postal) && <div><span className="text-gray-400">Ciudad:</span> <span className="text-gray-700">{fichaContacto.ciudad}{fichaContacto.codigo_postal ? ` (${fichaContacto.codigo_postal})` : ""}</span></div>}
+              {fichaContacto.provincia && <div><span className="text-gray-400">Provincia:</span> <span className="text-gray-700">{fichaContacto.provincia}</span></div>}
+              {fichaContacto.iban && <div><span className="text-gray-400">IBAN:</span> <span className="text-gray-700 font-mono">{fichaContacto.iban}</span></div>}
+              {fichaContacto.banco && <div><span className="text-gray-400">Banco:</span> <span className="text-gray-700">{fichaContacto.banco}</span></div>}
+              {fichaContacto.web && <div><span className="text-gray-400">Web:</span> <span className="text-gray-700">{fichaContacto.web}</span></div>}
+            </div>
             {fichaContacto.notas && (
               <div className="px-6 py-2 bg-amber-50 border-b border-amber-100 text-xs text-amber-800">{fichaContacto.notas}</div>
             )}
@@ -1214,26 +1348,25 @@ function VistaContactos({ contactos, setContactos, facturas, onView }) {
         <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
           <div>
             <h2 className="text-lg font-black text-gray-900">Directorio de contactos</h2>
-            <p className="text-xs text-gray-400 mt-0.5">Clientes y proveedores registrados automáticamente al crear facturas</p>
+            <p className="text-xs text-gray-400 mt-0.5">Clientes y proveedores con datos fiscales completos</p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-2 items-center">
             <KPI label="Total" value={String(contactos.length)} sub="contactos"/>
             <KPI label="Clientes" value={String(contactos.filter(c=>c.tipo==="cliente"||c.tipo==="ambos").length)} tint="green"/>
             <KPI label="Proveedores" value={String(contactos.filter(c=>c.tipo==="proveedor"||c.tipo==="ambos").length)} tint="red"/>
+            <button onClick={() => { resetNewForm(); setShowNewForm(true); }}
+              className="ml-2 flex items-center gap-1.5 px-4 py-2.5 text-sm font-black bg-emerald-600 text-white rounded-xl hover:bg-emerald-500 shadow-lg">
+              {Ico.plus} Nuevo contacto
+            </button>
           </div>
         </div>
         <div className="flex flex-wrap gap-3">
           <div className="relative flex-1 min-w-56">
-            <input
-              className="w-full border rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-slate-300 outline-none pr-10"
-              placeholder="Buscar por nombre, NIF/CIF/DNI/NIE, teléfono, producto, fecha o importe..."
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-            />
+            <input className="w-full border rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-slate-300 outline-none pr-10"
+              placeholder="Buscar por nombre, NIF/CIF/DNI/NIE, telefono, producto, fecha o importe..."
+              value={search} onChange={e => setSearch(e.target.value)}/>
             <span className="absolute right-3 top-2.5 text-gray-300">
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
-              </svg>
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
             </span>
           </div>
           {["todos","cliente","proveedor","ambos"].map(t => (
@@ -1251,15 +1384,18 @@ function VistaContactos({ contactos, setContactos, facturas, onView }) {
         <div className="text-center py-20 bg-white border border-gray-100 rounded-2xl">
           <div className="text-5xl mb-3">👥</div>
           <div className="text-sm font-semibold text-gray-400">
-            {search ? `Sin resultados para "${search}"` : "Sin contactos aún. Se registran al crear facturas."}
+            {search ? `Sin resultados para "${search}"` : "Sin contactos aun."}
           </div>
+          <button onClick={() => { resetNewForm(); setShowNewForm(true); }} className="mt-4 px-5 py-2.5 text-sm font-black bg-emerald-600 text-white rounded-xl hover:bg-emerald-500">
+            Registrar primer contacto
+          </button>
         </div>
       ) : (
         <div className="bg-white border border-gray-200 rounded-2xl overflow-hidden shadow-sm">
           <table className="w-full text-sm">
             <thead className="bg-gray-50 border-b border-gray-200">
               <tr>
-                {["Nombre / Razón social","NIF / CIF / DNI","Tipo","Teléfono","Email","Facturas","Acciones"].map((h,i) => (
+                {["Nombre / Razon social","NIF / CIF / DNI","Tipo","Telefono","Email","Facturas","Acciones"].map((h,i) => (
                   <th key={i} className={`py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wide ${i<4?"text-left":"text-right"} ${i===6?"text-center":""}`}>{h}</th>
                 ))}
               </tr>
@@ -1285,14 +1421,14 @@ function VistaContactos({ contactos, setContactos, facturas, onView }) {
                     <td className="py-3 px-4">{tipoBadge(c.tipo)}</td>
                     <td className="py-3 px-4">
                       {isEdit
-                        ? <input className="w-full border rounded-lg px-2 py-1 text-sm focus:ring-2 focus:ring-slate-300 outline-none" value={form.telefono||""} onChange={e=>setForm(p=>({...p,telefono:e.target.value}))} placeholder="Teléfono"/>
-                        : <span className="text-xs text-gray-500">{c.telefono || <span className="italic text-gray-300">—</span>}</span>
+                        ? <input className="w-full border rounded-lg px-2 py-1 text-sm focus:ring-2 focus:ring-slate-300 outline-none" value={form.telefono||""} onChange={e=>setForm(p=>({...p,telefono:e.target.value}))} placeholder="Telefono"/>
+                        : <span className="text-xs text-gray-500">{c.telefono || <span className="italic text-gray-300">-</span>}</span>
                       }
                     </td>
                     <td className="py-3 px-4 text-right">
                       {isEdit
                         ? <input className="w-full border rounded-lg px-2 py-1 text-sm focus:ring-2 focus:ring-slate-300 outline-none" value={form.email||""} onChange={e=>setForm(p=>({...p,email:e.target.value}))} placeholder="Email"/>
-                        : <span className="text-xs text-gray-500">{c.email || <span className="italic text-gray-300">—</span>}</span>
+                        : <span className="text-xs text-gray-500">{c.email || <span className="italic text-gray-300">-</span>}</span>
                       }
                     </td>
                     <td className="py-3 px-4 text-right">
@@ -1304,13 +1440,13 @@ function VistaContactos({ contactos, setContactos, facturas, onView }) {
                       <div className="flex gap-1 justify-center">
                         {isEdit ? (
                           <>
-                            <button onClick={saveEdit} className="p-1.5 rounded-lg text-emerald-600 hover:bg-emerald-50 text-xs font-bold" title="Guardar">{Ico.check}</button>
+                            <button onClick={saveEdit} disabled={saving} className="p-1.5 rounded-lg text-emerald-600 hover:bg-emerald-50 text-xs font-bold" title="Guardar">{Ico.check}</button>
                             <button onClick={cancelEdit} className="p-1.5 rounded-lg text-gray-400 hover:bg-gray-100 text-xs" title="Cancelar">✕</button>
                           </>
                         ) : (
                           <>
                             <button onClick={() => setVerFichaId(c.id)} className="p-1.5 rounded-lg opacity-0 group-hover:opacity-100 text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-all" title="Ver ficha">{Ico.eye}</button>
-                            <button onClick={() => startEdit(c)} className="p-1.5 rounded-lg opacity-0 group-hover:opacity-100 text-amber-500 hover:text-amber-700 hover:bg-amber-50 transition-all" title="Editar">{Ico.edit}</button>
+                            <button onClick={() => openEditFull(c)} className="p-1.5 rounded-lg opacity-0 group-hover:opacity-100 text-amber-500 hover:text-amber-700 hover:bg-amber-50 transition-all" title="Editar completo">{Ico.edit}</button>
                             <button onClick={() => deleteContact(c.id)} className="p-1.5 rounded-lg opacity-0 group-hover:opacity-100 text-rose-400 hover:text-rose-600 hover:bg-rose-50 transition-all" title="Eliminar">{Ico.trash}</button>
                           </>
                         )}
@@ -1324,9 +1460,8 @@ function VistaContactos({ contactos, setContactos, facturas, onView }) {
         </div>
       )}
 
-      {/* Nota al pie */}
       <div className="text-xs text-gray-400 text-center px-4 pb-2">
-        Los contactos se registran automáticamente al crear o guardar facturas. Puedes editar teléfono, email y notas directamente desde esta tabla.
+        Los contactos se registran automaticamente al crear facturas o puedes darlos de alta manualmente con "Nuevo contacto".
       </div>
     </div>
   );
@@ -5255,6 +5390,60 @@ function ContaAutoApp() {
 
   useEffect(() => { cargarDatos(); }, [cargarDatos]);
 
+  // ── Contactos DB ────────────────────────────────────────
+  const saveContactoToDB = async (contacto) => {
+    const uid = user?.id;
+    if (!uid) return contacto;
+    const row = {
+      user_id: uid, nombre: contacto.nombre || "",
+      nif: (contacto.nif || "").trim().toUpperCase(),
+      tipo: contacto.tipo || "cliente",
+      telefono: contacto.telefono || "", email: contacto.email || "",
+      direccion: contacto.direccion || "",
+      direccion_fiscal: contacto.direccion_fiscal || contacto.direccion || "",
+      codigo_postal: contacto.codigo_postal || "",
+      ciudad: contacto.ciudad || "", provincia: contacto.provincia || "",
+      iban: contacto.iban || "", banco: contacto.banco || "",
+      persona_contacto: contacto.persona_contacto || "",
+      web: contacto.web || "", notas: contacto.notas || "",
+    };
+    if (contacto.id && typeof contacto.id === "number") {
+      const { data, error } = await supabase.from("contactos").update(row).eq("id", contacto.id).select().single();
+      if (error) { console.error("Error guardando contacto:", error.message); return contacto; }
+      return data || contacto;
+    } else {
+      const { data, error } = await supabase.from("contactos").insert(row).select().single();
+      if (error) { console.error("Error creando contacto:", error.message); return contacto; }
+      return data || contacto;
+    }
+  };
+  const deleteContactoFromDB = async (id) => {
+    const { error } = await supabase.from("contactos").delete().eq("id", id);
+    if (error) { alert("Error al eliminar contacto: " + error.message); return false; }
+    return true;
+  };
+  const upsertContactoConDB = async (factura) => {
+    const uid = user?.id;
+    if (!uid) return;
+    const nifNorm = (factura.nif || "").trim().toUpperCase();
+    const nomNorm = (factura.cliente || "").trim().toLowerCase();
+    const tipoNuevo = factura.tipo === "venta" ? "cliente" : "proveedor";
+    const existente = contactos.find(c =>
+      (nifNorm && c.nif && c.nif.trim().toUpperCase() === nifNorm) ||
+      (!nifNorm && c.nombre && c.nombre.trim().toLowerCase() === nomNorm)
+    );
+    if (existente) {
+      const nuevoTipo = existente.tipo === tipoNuevo ? existente.tipo : "ambos";
+      const updated = { ...existente, tipo: nuevoTipo, nif: nifNorm || existente.nif };
+      const saved = await saveContactoToDB(updated);
+      setContactos(p => p.map(c => c.id === existente.id ? saved : c));
+    } else {
+      const nuevo = { nombre: factura.cliente, nif: nifNorm, tipo: tipoNuevo, telefono: "", email: "", direccion: "", notas: "" };
+      const saved = await saveContactoToDB(nuevo);
+      if (saved && saved.id) setContactos(p => [...p, saved]);
+    }
+  };
+
   // ── Facturas ──────────────────────────────────────────
   const saveFactura = async (f) => {
     const uid = user?.id;
@@ -5283,7 +5472,7 @@ function ContaAutoApp() {
       if (data) {
         const updated = dbToFactura(data);
         setFacturas(p => p.map(x => x.id === editing.id ? updated : x));
-        setContactos(p => upsertContacto(p, updated));
+        await upsertContactoConDB(updated);
       }
       closeForm(); setView(f.tipo === "venta" ? "ventas" : "gastos");
     } else {
@@ -5292,7 +5481,7 @@ function ContaAutoApp() {
       if (data) {
         const saved = dbToFactura(data);
         setFacturas(p => [saved, ...p]);
-        setContactos(p => upsertContacto(p, saved));
+        await upsertContactoConDB(saved);
         closeForm(); setCreada(saved);
       }
     }
@@ -5302,7 +5491,6 @@ function ContaAutoApp() {
     const { error } = await supabase.from("facturas").delete().eq("id", id);
     if (error) { alert("Error al eliminar: " + error.message); return; }
     setFacturas(p => p.filter(f => f.id !== id));
-    setContactos(p => p.filter(c => c.id !== id)); // limpiar contacto huérfano si procede
   };
   const marcarCobrado = async (id) => {
     const { error } = await supabase.from("facturas").update({ cobrado: true }).eq("id", id);
@@ -5693,7 +5881,7 @@ function ContaAutoApp() {
                 {view==="nominas"      && <VistaNominas nominas={nominas} trabajadores={trabajadores} onNew={() => {setEditing(null);setSubview("new-nomina");}} onView={n=>setViewing({tipo:"nomina",data:n})} onDelete={delNomina} periodMode={periodMode} periodValue={periodValue} periodYear={periodYear}/>}
                 {view==="actividades"  && <GestionActividades actividades={actividades} setActividades={setActividades}/>}
                 {view==="mod347"       && <Vista347 facturas={facturas} year={periodYear} availYears={availYears}/>}
-                {view==="contactos"    && <VistaContactos contactos={contactos} setContactos={setContactos} facturas={facturas} onView={f=>setViewing({tipo:"factura",data:f})}/>}
+                {view==="contactos"    && <VistaContactos contactos={contactos} setContactos={setContactos} facturas={facturas} onView={f=>setViewing({tipo:"factura",data:f})} onSaveContacto={saveContactoToDB} onDeleteContacto={deleteContactoFromDB}/>}
                 {view==="extracto"     && <VistaExtractoBancario facturas={facturas} nominas={nominas}/>}
                 {view==="tesoreria"   && <SafeView name="Tesoreria"><VistaTesoria facturas={facturas}/></SafeView>}
                 {view==="modelos"     && <SafeView name="Modelos Hacienda"><VistaModelos facturas={facturas} nominas={nominas} periodYear={periodYear}/></SafeView>}
