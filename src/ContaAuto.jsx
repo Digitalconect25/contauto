@@ -1092,6 +1092,21 @@ function ClienteAutocomplete({ value, nif, onChange, contactos=[], label="Client
 // VISTA DIRECTORIO DE CONTACTOS
 // ════════════════════════════════════════════════════════════
 
+function CampoContacto({ label, field, placeholder, type="text", mono=false, area=false, formData, setFormData }) {
+  return (
+    <div>
+      <label className="block text-xs font-semibold text-gray-600 mb-1">{label}</label>
+      {area ? (
+        <textarea className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-slate-300 outline-none resize-none" rows={2}
+          placeholder={placeholder} value={formData[field]||""} onChange={e => setFormData(p => ({...p,[field]:e.target.value}))}/>
+      ) : (
+        <input type={type} className={`w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-slate-300 outline-none ${mono?"font-mono":""}`}
+          placeholder={placeholder} value={formData[field]||""} onChange={e => setFormData(p => ({...p,[field]:e.target.value}))}/>
+      )}
+    </div>
+  );
+}
+
 function VistaContactos({ contactos, setContactos, facturas, onView, onSaveContacto, onDeleteContacto }) {
   const [search,    setSearch]    = useState("");
   const [filtroTipo, setFiltroTipo] = useState("todos");
@@ -1190,19 +1205,6 @@ function VistaContactos({ contactos, setContactos, facturas, onView, onSaveConta
     return <Tag color="violet">Cliente y proveedor</Tag>;
   };
 
-  const Campo = ({ label, field, placeholder, type="text", mono=false, area=false }) => (
-    <div>
-      <label className="block text-xs font-semibold text-gray-600 mb-1">{label}</label>
-      {area ? (
-        <textarea className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-slate-300 outline-none resize-none" rows={2}
-          placeholder={placeholder} value={newForm[field]||""} onChange={e => setNewForm(p => ({...p,[field]:e.target.value}))}/>
-      ) : (
-        <input type={type} className={`w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-slate-300 outline-none ${mono?"font-mono":""}`}
-          placeholder={placeholder} value={newForm[field]||""} onChange={e => setNewForm(p => ({...p,[field]:e.target.value}))}/>
-      )}
-    </div>
-  );
-
   return (
     <div className="space-y-5">
       {/* Modal: Formulario nuevo/editar contacto */}
@@ -1218,8 +1220,8 @@ function VistaContactos({ contactos, setContactos, facturas, onView, onSaveConta
             </div>
             <div className="px-6 py-5 space-y-5">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <Campo label="Nombre / Razon social *" field="nombre" placeholder="Ej: Distribuciones Garcia SL"/>
-                <Campo label="NIF / CIF / DNI / NIE *" field="nif" placeholder="Ej: B12345678" mono/>
+                <CampoContacto formData={newForm} setFormData={setNewForm} label="Nombre / Razon social *" field="nombre" placeholder="Ej: Distribuciones Garcia SL"/>
+                <CampoContacto formData={newForm} setFormData={setNewForm} label="NIF / CIF / DNI / NIE *" field="nif" placeholder="Ej: B12345678" mono/>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div>
@@ -1231,36 +1233,36 @@ function VistaContactos({ contactos, setContactos, facturas, onView, onSaveConta
                     <option value="ambos">Cliente y proveedor</option>
                   </select>
                 </div>
-                <Campo label="Persona de contacto" field="persona_contacto" placeholder="Nombre del contacto"/>
-                <Campo label="Web" field="web" placeholder="www.ejemplo.com"/>
+                <CampoContacto formData={newForm} setFormData={setNewForm} label="Persona de contacto" field="persona_contacto" placeholder="Nombre del contacto"/>
+                <CampoContacto formData={newForm} setFormData={setNewForm} label="Web" field="web" placeholder="www.ejemplo.com"/>
               </div>
               <div className="border-t border-gray-100 pt-4">
                 <div className="text-xs font-black uppercase tracking-widest text-gray-400 mb-3">Datos de contacto</div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <Campo label="Telefono" field="telefono" placeholder="Ej: 965 123 456" type="tel"/>
-                  <Campo label="Email" field="email" placeholder="email@ejemplo.com" type="email"/>
+                  <CampoContacto formData={newForm} setFormData={setNewForm} label="Telefono" field="telefono" placeholder="Ej: 965 123 456" type="tel"/>
+                  <CampoContacto formData={newForm} setFormData={setNewForm} label="Email" field="email" placeholder="email@ejemplo.com" type="email"/>
                 </div>
               </div>
               <div className="border-t border-gray-100 pt-4">
                 <div className="text-xs font-black uppercase tracking-widest text-gray-400 mb-3">Direccion fiscal</div>
                 <div className="grid grid-cols-1 gap-4">
-                  <Campo label="Direccion" field="direccion" placeholder="Calle, numero, piso..."/>
+                  <CampoContacto formData={newForm} setFormData={setNewForm} label="Direccion" field="direccion" placeholder="Calle, numero, piso..."/>
                   <div className="grid grid-cols-3 gap-4">
-                    <Campo label="Codigo postal" field="codigo_postal" placeholder="03001"/>
-                    <Campo label="Ciudad" field="ciudad" placeholder="Alicante"/>
-                    <Campo label="Provincia" field="provincia" placeholder="Alicante"/>
+                    <CampoContacto formData={newForm} setFormData={setNewForm} label="Codigo postal" field="codigo_postal" placeholder="03001"/>
+                    <CampoContacto formData={newForm} setFormData={setNewForm} label="Ciudad" field="ciudad" placeholder="Alicante"/>
+                    <CampoContacto formData={newForm} setFormData={setNewForm} label="Provincia" field="provincia" placeholder="Alicante"/>
                   </div>
                 </div>
               </div>
               <div className="border-t border-gray-100 pt-4">
                 <div className="text-xs font-black uppercase tracking-widest text-gray-400 mb-3">Datos bancarios</div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <Campo label="IBAN" field="iban" placeholder="ES00 0000 0000 0000 0000 0000" mono/>
-                  <Campo label="Banco / Entidad" field="banco" placeholder="Nombre del banco"/>
+                  <CampoContacto formData={newForm} setFormData={setNewForm} label="IBAN" field="iban" placeholder="ES00 0000 0000 0000 0000 0000" mono/>
+                  <CampoContacto formData={newForm} setFormData={setNewForm} label="Banco / Entidad" field="banco" placeholder="Nombre del banco"/>
                 </div>
               </div>
               <div className="border-t border-gray-100 pt-4">
-                <Campo label="Notas / Observaciones" field="notas" placeholder="Informacion adicional..." area/>
+                <CampoContacto formData={newForm} setFormData={setNewForm} label="Notas / Observaciones" field="notas" placeholder="Informacion adicional..." area/>
               </div>
             </div>
             <div className="px-6 py-4 border-t border-gray-200 flex justify-end gap-3">
@@ -5386,6 +5388,54 @@ function ContaAutoApp() {
     }
     if (ra.data) setActivos(ra.data.map(dbToActivo));
     if (rr.data) setRecurrentes(rr.data.map(dbToRecurrente));
+
+    // ── Sincronizar contactos desde facturas existentes ──
+    if (rf.data && rc.data) {
+      const facturasArr = rf.data.map(dbToFactura);
+      const contactosExistentes = rc.data;
+      const nuevos = [];
+      const vistos = new Set();
+      for (const f of facturasArr) {
+        const nombre = (f.cliente || "").trim();
+        if (!nombre) continue;
+        const nifNorm = (f.nif || "").trim().toUpperCase();
+        const clave = nifNorm || nombre.toLowerCase();
+        if (vistos.has(clave)) continue;
+        vistos.add(clave);
+        const yaExiste = contactosExistentes.some(c =>
+          (nifNorm && (c.nif || "").trim().toUpperCase() === nifNorm) ||
+          (!nifNorm && (c.nombre || "").trim().toLowerCase() === nombre.toLowerCase())
+        );
+        if (!yaExiste) {
+          nuevos.push({
+            user_id: uid, nombre, nif: nifNorm,
+            tipo: f.tipo === "venta" ? "cliente" : "proveedor",
+            telefono: "", email: "", direccion: "", notas: "",
+            direccion_fiscal: "", codigo_postal: "", ciudad: "",
+            provincia: "", iban: "", banco: "", persona_contacto: "", web: "",
+          });
+        }
+      }
+      if (nuevos.length > 0) {
+        // Resolver duplicados de tipo (mismo contacto como cliente Y proveedor)
+        const mapaFinal = {};
+        for (const n of nuevos) {
+          const k = n.nif || n.nombre.toLowerCase();
+          if (mapaFinal[k]) {
+            if (mapaFinal[k].tipo !== n.tipo) mapaFinal[k].tipo = "ambos";
+          } else {
+            mapaFinal[k] = { ...n };
+          }
+        }
+        const lote = Object.values(mapaFinal);
+        const { data: insertados, error: errIns } = await supabase.from("contactos").insert(lote).select();
+        if (errIns) console.error("Error sincronizando contactos:", errIns.message);
+        if (insertados && insertados.length > 0) {
+          setContactos(prev => [...prev, ...insertados]);
+          console.log(`Sincronizados ${insertados.length} contactos desde facturas existentes`);
+        }
+      }
+    }
   }, [user]);
 
   useEffect(() => { cargarDatos(); }, [cargarDatos]);
