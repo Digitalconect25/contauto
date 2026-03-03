@@ -416,6 +416,18 @@ function buildFacturaPrintHTML(f, logo) {
       : "Documento recibido registrado internamente. Conserva el original del proveedor como soporte documental del gasto (art. 19 RD 1619/2012)."
     }
   </div>
+  ${isV && f.verifactuHash ? `
+  <div style="margin-top:20px;border:2px solid #1e293b;border-radius:10px;padding:16px 20px;background:#f8fafc;display:flex;align-items:center;gap:20px">
+    <div style="flex-shrink:0">
+      <img src="https://api.qrserver.com/v1/create-qr-code/?size=120x120&ecc=M&data=${encodeURIComponent(`https://www2.agenciatributaria.gob.es/wlpl/TGVI-JDIT/ws/verifactu?nif=${encodeURIComponent((f.nif||"").trim().toUpperCase())}&numseriefactura=${encodeURIComponent(f.numero)}&fecha=${f.fecha}&importe=${t.total.toFixed(2)}`)}" alt="QR VeriFactu" style="width:100px;height:100px;border:1px solid #e2e8f0;border-radius:6px"/>
+    </div>
+    <div style="flex:1">
+      <div style="font-size:10px;font-weight:900;color:#0f172a;text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">VERI*FACTU</div>
+      <div style="font-size:9px;color:#334155;line-height:1.5">Factura verificable en la sede electronica de la AEAT</div>
+      <div style="font-size:8px;color:#64748b;margin-top:6px;font-family:monospace;word-break:break-all">Hash: ${f.verifactuHash.substring(0,32)}...</div>
+      <div style="font-size:8px;color:#64748b;font-family:monospace">Pos. cadena: ${f.verifactuCadenaPos || 0} · ${new Date(f.verifactuFechaRegistro || f.fecha).toLocaleString("es-ES")}</div>
+    </div>
+  </div>` : ""}
   </div></body></html>`;
 }
 
@@ -581,13 +593,17 @@ function DetalleFacturaModal({ factura, logo, onClose, onEdit, onDelete }) {
   if (!factura) return null;
   const t   = calcFactura(factura.lineas, factura.retencionPct, factura.aplicarRecargo);
   const isV = factura.tipo === "venta";
+  const esTienda = factura.tipoDoc === "venta_tienda";
+  const ivaReal = esTienda ? (parseFloat(factura.impuestoManual)||0) : t.totalIVA;
+  const totalReal = esTienda ? (t.totalBase + ivaReal) : t.total;
   const html = buildFacturaPrintHTML(factura, logo);
+  const headerColor = esTienda ? "bg-violet-600" : isV ? "bg-emerald-600" : "bg-rose-600";
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{background:"rgba(15,23,42,0.6)",backdropFilter:"blur(6px)"}}>
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col overflow-hidden">
-        <div className={`flex items-center justify-between px-6 py-4 ${isV?"bg-emerald-600":"bg-rose-600"} text-white flex-shrink-0`}>
+        <div className={`flex items-center justify-between px-6 py-4 ${headerColor} text-white flex-shrink-0`}>
           <div className="flex items-center gap-3">
-            <Tag color={isV?"green":"red"}><span className="text-white text-opacity-90">{isV?"Emitida":"Recibida"}</span></Tag>
+            <Tag color={esTienda?"violet":isV?"green":"red"}><span className="text-white text-opacity-90">{esTienda?"Tienda":isV?"Emitida":"Recibida"}</span></Tag>
             <span className="text-xl font-black">{factura.numero}</span>
             <span className="text-sm opacity-70 hidden md:block">{new Date(factura.fecha).toLocaleDateString("es-ES")}</span>
           </div>
@@ -666,14 +682,44 @@ function DetalleFacturaModal({ factura, logo, onClose, onEdit, onDelete }) {
           <div className="flex justify-end">
             <div className="bg-gray-50 border border-gray-200 rounded-xl p-5 w-full max-w-sm space-y-2 text-sm">
               <div className="flex justify-between"><span className="text-gray-600">Base imponible</span><span className="font-bold font-mono">{fmt(t.totalBase)}</span></div>
-              <div className="flex justify-between"><span className="text-gray-600">Cuota IVA</span><span className="font-bold text-sky-700 font-mono">{fmt(t.totalIVA)}</span></div>
+              <div className="flex justify-between"><span className="text-gray-600">Cuota IVA</span><span className="font-bold text-sky-700 font-mono">{fmt(ivaReal)}</span></div>
               {t.totalRecargo>0&&<div className="flex justify-between"><span className="text-gray-600">Rec. equivalencia</span><span className="font-bold text-amber-700 font-mono">{fmt(t.totalRecargo)}</span></div>}
               {t.totalRetencion>0&&<div className="flex justify-between"><span className="text-gray-600">Retención IRPF</span><span className="font-bold text-orange-600 font-mono">-{fmt(t.totalRetencion)}</span></div>}
-              <div className={`flex justify-between font-black text-xl border-t border-gray-300 pt-3 ${isV?"text-emerald-700":"text-rose-700"}`}>
-                <span>Total</span><span className="font-mono">{fmt(t.total)}</span>
+              <div className={`flex justify-between font-black text-xl border-t border-gray-300 pt-3 ${esTienda?"text-violet-700":isV?"text-emerald-700":"text-rose-700"}`}>
+                <span>Total</span><span className="font-mono">{fmt(totalReal)}</span>
               </div>
+              {esTienda && (
+                <>
+                  <div className="border-t border-gray-300 pt-3 mt-2 space-y-2">
+                    <div className="flex justify-between"><span className="text-gray-600">Coste mercancía</span><span className="font-bold text-rose-600 font-mono">-{fmt(parseFloat(factura.costeMercancia)||0)}</span></div>
+                    <div className={`flex justify-between font-black text-lg ${(t.totalBase - (parseFloat(factura.costeMercancia)||0)) >= 0 ? "text-emerald-700" : "text-rose-700"}`}>
+                      <span>Beneficio</span><span className="font-mono">{fmt(t.totalBase - (parseFloat(factura.costeMercancia)||0))}</span>
+                    </div>
+                    {t.totalBase > 0 && (parseFloat(factura.costeMercancia)||0) > 0 && (
+                      <div className="text-xs text-violet-600 text-right">Margen: {(((t.totalBase - (parseFloat(factura.costeMercancia)||0)) / t.totalBase) * 100).toFixed(1)}%</div>
+                    )}
+                  </div>
+                </>
+              )}
             </div>
           </div>
+          {factura.verifactuHash && (
+            <div className="bg-slate-900 text-white rounded-xl p-4 space-y-2">
+              <div className="flex items-center gap-2">
+                <svg className="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+                <span className="text-xs font-black text-emerald-400 uppercase tracking-wider">VERI*FACTU - Registro inmutable</span>
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div><span className="text-slate-400">Hash SHA-256:</span><div className="font-mono text-slate-300 break-all text-[10px] mt-0.5">{factura.verifactuHash}</div></div>
+                <div><span className="text-slate-400">Hash previo:</span><div className="font-mono text-slate-300 break-all text-[10px] mt-0.5">{factura.verifactuHashPrevio || "Inicio de cadena"}</div></div>
+              </div>
+              <div className="flex gap-4 text-[10px] text-slate-400 border-t border-slate-700 pt-2">
+                <span>Pos. cadena: <strong className="text-slate-200">{factura.verifactuCadenaPos}</strong></span>
+                <span>Registrado: <strong className="text-slate-200">{factura.verifactuFechaRegistro ? new Date(factura.verifactuFechaRegistro).toLocaleString("es-ES") : "-"}</strong></span>
+                {factura.esRectificativa && <span className="text-orange-400 font-bold">FACTURA RECTIFICATIVA</span>}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -688,20 +734,25 @@ function FacturaCreadaModal({ factura, logo, onEdit, onClose }) {
   if (!factura) return null;
   const t   = calcFactura(factura.lineas, factura.retencionPct, factura.aplicarRecargo);
   const isV = factura.tipo === "venta";
+  const esTienda = factura.tipoDoc === "venta_tienda";
+  const ivaReal = esTienda ? (parseFloat(factura.impuestoManual)||0) : t.totalIVA;
+  const totalReal = esTienda ? (t.totalBase + ivaReal) : t.total;
   const html = buildFacturaPrintHTML(factura, logo);
+  const headerGrad = esTienda ? "bg-gradient-to-br from-violet-500 to-violet-700" : isV ? "bg-gradient-to-br from-emerald-500 to-emerald-700" : "bg-gradient-to-br from-rose-500 to-rose-700";
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{background:"rgba(15,23,42,0.75)",backdropFilter:"blur(8px)"}}>
       <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden">
         {/* Cabecera éxito */}
-        <div className={`px-8 py-7 text-center ${isV?"bg-gradient-to-br from-emerald-500 to-emerald-700":"bg-gradient-to-br from-rose-500 to-rose-700"} text-white`}>
+        <div className={`px-8 py-7 text-center ${headerGrad} text-white`}>
           <div className="w-16 h-16 bg-white bg-opacity-20 rounded-full flex items-center justify-center mx-auto mb-4 text-3xl">✓</div>
-          <h2 className="text-2xl font-black mb-1">{isV?"Factura emitida":"Gasto registrado"}</h2>
+          <h2 className="text-2xl font-black mb-1">{esTienda?"Ventas de tienda registradas":isV?"Factura emitida":"Gasto registrado"}</h2>
           <p className="text-sm opacity-80 mb-3">{factura.numero}</p>
           <div className="bg-white bg-opacity-20 rounded-xl px-5 py-3 inline-block">
-            <div className="text-xs opacity-70 mb-0.5">Total factura</div>
-            <div className="text-3xl font-black font-mono">{fmt(t.total)}</div>
-            {isV && !factura.cobrado && <div className="text-xs opacity-70 mt-1">Añadida a saldos pendientes de cobro</div>}
-            {!isV && !factura.pagado && <div className="text-xs opacity-70 mt-1">Añadida a saldos pendientes de pago</div>}
+            <div className="text-xs opacity-70 mb-0.5">{esTienda?"Total venta del mes":"Total factura"}</div>
+            <div className="text-3xl font-black font-mono">{fmt(totalReal)}</div>
+            {esTienda && <div className="text-xs opacity-70 mt-1">Beneficio: {fmt(t.totalBase - (parseFloat(factura.costeMercancia)||0))}</div>}
+            {!esTienda && isV && !factura.cobrado && <div className="text-xs opacity-70 mt-1">Añadida a saldos pendientes de cobro</div>}
+            {!esTienda && !isV && !factura.pagado && <div className="text-xs opacity-70 mt-1">Añadida a saldos pendientes de pago</div>}
           </div>
         </div>
 
@@ -709,7 +760,7 @@ function FacturaCreadaModal({ factura, logo, onEdit, onClose }) {
         <div className="px-8 py-5 border-b border-gray-100">
           <div className="grid grid-cols-2 gap-3 text-sm">
             <div className="bg-gray-50 rounded-xl p-3">
-              <div className="text-xs text-gray-400 mb-0.5">{isV?"Cliente":"Proveedor"}</div>
+              <div className="text-xs text-gray-400 mb-0.5">{esTienda?"Registro":isV?"Cliente":"Proveedor"}</div>
               <div className="font-bold text-gray-900 truncate">{factura.cliente}</div>
             </div>
             <div className="bg-gray-50 rounded-xl p-3">
@@ -717,13 +768,25 @@ function FacturaCreadaModal({ factura, logo, onEdit, onClose }) {
               <div className="font-bold text-gray-900">{factura.actividad}</div>
             </div>
             <div className="bg-gray-50 rounded-xl p-3">
-              <div className="text-xs text-gray-400 mb-0.5">Base imponible</div>
+              <div className="text-xs text-gray-400 mb-0.5">{esTienda?"Subtotal (sin impuesto)":"Base imponible"}</div>
               <div className="font-bold font-mono">{fmt(t.totalBase)}</div>
             </div>
             <div className="bg-gray-50 rounded-xl p-3">
-              <div className="text-xs text-gray-400 mb-0.5">IVA ({isV?"repercutido":"soportado"})</div>
-              <div className="font-bold text-sky-700 font-mono">{fmt(t.totalIVA)}</div>
+              <div className="text-xs text-gray-400 mb-0.5">{esTienda?"Impuesto (IVA general)":`IVA (${isV?"repercutido":"soportado"})`}</div>
+              <div className="font-bold text-sky-700 font-mono">{fmt(ivaReal)}</div>
             </div>
+            {esTienda && (
+              <>
+                <div className="bg-rose-50 border border-rose-200 rounded-xl p-3">
+                  <div className="text-xs text-rose-600 mb-0.5">Coste mercancía</div>
+                  <div className="font-bold text-rose-700 font-mono">{fmt(parseFloat(factura.costeMercancia)||0)}</div>
+                </div>
+                <div className={`rounded-xl p-3 border ${(t.totalBase - (parseFloat(factura.costeMercancia)||0)) >= 0 ? "bg-emerald-50 border-emerald-200" : "bg-rose-50 border-rose-200"}`}>
+                  <div className="text-xs text-gray-500 mb-0.5">Beneficio</div>
+                  <div className={`font-black font-mono ${(t.totalBase - (parseFloat(factura.costeMercancia)||0)) >= 0 ? "text-emerald-700" : "text-rose-700"}`}>{fmt(t.totalBase - (parseFloat(factura.costeMercancia)||0))}</div>
+                </div>
+              </>
+            )}
             {t.totalRecargo > 0 && (
               <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 col-span-2">
                 <div className="text-xs text-amber-600 mb-0.5">Recargo de equivalencia (total)</div>
@@ -1869,38 +1932,451 @@ function DocumentoRecibidoForm({ actividades, onSave, onCancel, initial, contact
   );
 }
 
+// ════════════════════════════════════════════════════════════
+// AUDITORÍA CONTABLE + VERIFICACIÓN VERIFACTU
+// ════════════════════════════════════════════════════════════
+
+const NIF_RE = /^[0-9]{8}[A-Z]$|^[A-Z][0-9]{7}[0-9A-Z]$|^[KLMXYZ][0-9]{7}[A-Z]$/i;
+
+function ejecutarAuditoria(facturas) {
+  const alertas = [];
+  const emitidas = facturas.filter(f => f.modo === "emitida" || f.tipo === "venta").sort((a,b) => new Date(a.fecha) - new Date(b.fecha));
+  const recibidas = facturas.filter(f => f.modo === "recibida" || f.tipo === "gasto");
+  const todas = [...facturas].sort((a,b) => new Date(a.fecha) - new Date(b.fecha));
+  const hoy = new Date();
+
+  // ── 1. NUMERACIÓN: saltos y duplicados ──
+  const numeros = emitidas.map(f => f.numero);
+  const dupsNum = numeros.filter((n, i) => numeros.indexOf(n) !== i);
+  if (dupsNum.length > 0) alertas.push({ tipo: "error", cat: "Numeración", msg: `Facturas con número duplicado: ${[...new Set(dupsNum)].join(", ")}`, detalle: "VeriFactu exige numeración correlativa y única. Duplicados invalidan la cadena." });
+
+  // Detectar saltos en numeración secuencial (DC-YYYY/NNNN)
+  const dcNums = emitidas.map(f => { const m = f.numero.match(/DC-(\d{4})\/(\d+)/); return m ? { year: parseInt(m[1]), seq: parseInt(m[2]), num: f.numero } : null; }).filter(Boolean);
+  const byYear = {};
+  dcNums.forEach(n => { if (!byYear[n.year]) byYear[n.year] = []; byYear[n.year].push(n); });
+  Object.entries(byYear).forEach(([yr, nums]) => {
+    nums.sort((a,b) => a.seq - b.seq);
+    for (let i = 1; i < nums.length; i++) {
+      if (nums[i].seq - nums[i-1].seq > 1) {
+        alertas.push({ tipo: "warn", cat: "Numeración", msg: `Salto en numeración ${yr}: de ${nums[i-1].num} a ${nums[i].num} (faltan ${nums[i].seq - nums[i-1].seq - 1})`, detalle: "Hacienda puede interpretar saltos como facturas eliminadas." });
+      }
+    }
+  });
+
+  // ── 2. NIF/CIF: ausentes o mal formados ──
+  emitidas.filter(f => f.tipoDoc !== "venta_tienda").forEach(f => {
+    if (!f.nif && !f.clienteNif) alertas.push({ tipo: "warn", cat: "NIF", msg: `Factura ${f.numero} sin NIF/CIF del cliente`, detalle: "Obligatorio en facturas completas (art. 6 RD 1619/2012). En simplificadas (<400 EUR) puede omitirse." });
+    else { const nif = (f.nif || f.clienteNif || "").trim().toUpperCase(); if (nif && !NIF_RE.test(nif.replace(/[-\s]/g,""))) alertas.push({ tipo: "warn", cat: "NIF", msg: `NIF/CIF sospechoso en ${f.numero}: "${nif}"`, detalle: "El formato no coincide con DNI, NIE ni CIF estándar." }); }
+  });
+  recibidas.forEach(f => {
+    if (!f.nif && !f.clienteNif) alertas.push({ tipo: "info", cat: "NIF", msg: `Gasto ${f.numero} sin NIF del proveedor`, detalle: "Sin NIF no puedes deducir IVA soportado (art. 97 LIVA)." });
+  });
+
+  // ── 3. IVA: cálculos y tipos ──
+  todas.forEach(f => {
+    if (f.tipoDoc === "venta_tienda") return;
+    (f.lineas || []).forEach((l, i) => {
+      const tipo = parseInt(l.tipoIVA);
+      if (!l.exento && ![0, 4, 10, 21].includes(tipo)) alertas.push({ tipo: "error", cat: "IVA", msg: `Tipo IVA no estándar (${tipo}%) en ${f.numero}, línea ${i+1}`, detalle: "En España solo existen IVA 0% (exento), 4% (superreducido), 10% (reducido) y 21% (general)." });
+      if (parseFloat(l.precioUnitario) === 0 && parseFloat(l.cantidad) > 0) alertas.push({ tipo: "info", cat: "Importes", msg: `Precio unitario 0 en ${f.numero}, línea ${i+1}: "${l.descripcion}"`, detalle: "Puede ser correcto (muestra gratuita) pero verifica que no sea un error de entrada." });
+    });
+    const t = calcFactura(f.lineas, f.retencionPct, f.aplicarRecargo);
+    if (t.totalBase < 0) alertas.push({ tipo: "warn", cat: "Importes", msg: `Base imponible negativa en ${f.numero}: ${fmt(t.totalBase)}`, detalle: "Solo válido en facturas rectificativas. Si no lo es, revisa las cantidades." });
+  });
+
+  // ── 4. FECHAS: futuras, muy antiguas, orden ──
+  todas.forEach(f => {
+    const fd = new Date(f.fecha);
+    if (fd > hoy) alertas.push({ tipo: "warn", cat: "Fechas", msg: `Factura ${f.numero} con fecha futura: ${fd.toLocaleDateString("es-ES")}`, detalle: "Las facturas deben emitirse en la fecha de la operación o antes del día 16 del mes siguiente." });
+    const diasAnti = Math.floor((hoy - fd) / 86400000);
+    if (diasAnti > 1825) alertas.push({ tipo: "info", cat: "Fechas", msg: `Factura ${f.numero} tiene más de 5 años (${fd.toLocaleDateString("es-ES")})`, detalle: "Si ha prescrito (4 años), ya no tiene efecto fiscal pero conserva para auditorías." });
+  });
+
+  // ── 5. DUPLICADOS SOSPECHOSOS ──
+  const firmas = {};
+  todas.forEach(f => {
+    const t = calcFactura(f.lineas, f.retencionPct, f.aplicarRecargo);
+    const key = `${f.fecha}_${t.total.toFixed(2)}_${(f.cliente||"").toLowerCase().trim()}`;
+    if (!firmas[key]) firmas[key] = [];
+    firmas[key].push(f.numero);
+  });
+  Object.entries(firmas).filter(([,v]) => v.length > 1).forEach(([k, nums]) => {
+    alertas.push({ tipo: "warn", cat: "Duplicados", msg: `Posible duplicado: ${nums.join(" y ")} (misma fecha, importe y cliente)`, detalle: "Verifica que no sean facturas duplicadas por error." });
+  });
+
+  // ── 6. SALDOS PENDIENTES ANTIGUOS ──
+  todas.forEach(f => {
+    const isV = f.tipo === "venta";
+    const pendiente = isV ? !f.cobrado : !f.pagado;
+    if (pendiente) {
+      const dias = Math.floor((hoy - new Date(f.fecha)) / 86400000);
+      if (dias > 90) alertas.push({ tipo: "warn", cat: "Saldos", msg: `${f.numero}: ${isV ? "sin cobrar" : "sin pagar"} desde hace ${dias} días`, detalle: isV ? "Facturas impagadas >90 días: valora provisión por insolvencia (art. 13.1 LIS)." : "Gastos pendientes de pago prolongados pueden generar problemas de tesorería." });
+    }
+  });
+
+  // ── 7. CADENA VERIFACTU ──
+  const conHash = emitidas.filter(f => f.verifactuHash).sort((a,b) => (a.verifactuCadenaPos||0) - (b.verifactuCadenaPos||0));
+  const sinHash = emitidas.filter(f => !f.verifactuHash && f.tipoDoc !== "venta_tienda");
+  if (sinHash.length > 0 && conHash.length > 0) alertas.push({ tipo: "warn", cat: "VeriFactu", msg: `${sinHash.length} factura(s) emitida(s) sin hash VeriFactu`, detalle: "Facturas anteriores a la activación del sistema. Considera regenerar la cadena." });
+  for (let i = 1; i < conHash.length; i++) {
+    if ((conHash[i].verifactuCadenaPos||0) - (conHash[i-1].verifactuCadenaPos||0) !== 1) {
+      alertas.push({ tipo: "error", cat: "VeriFactu", msg: `Salto en cadena VeriFactu: pos ${conHash[i-1].verifactuCadenaPos} → ${conHash[i].verifactuCadenaPos}`, detalle: "La cadena de hashes debe ser consecutiva. Esto indica una posible manipulación o error." });
+    }
+    if (conHash[i].verifactuHashPrevio && conHash[i].verifactuHashPrevio !== conHash[i-1].verifactuHash) {
+      alertas.push({ tipo: "error", cat: "VeriFactu", msg: `Rotura de cadena en ${conHash[i].numero}: hash previo no coincide`, detalle: "GRAVE: el hash previo almacenado no coincide con el hash de la factura anterior. La integridad de la cadena está comprometida." });
+    }
+  }
+
+  // ── 8. ACTIVIDADES SIN ASIGNAR ──
+  todas.filter(f => !f.actividad || f.actividad === "Sin actividad").forEach(f => {
+    alertas.push({ tipo: "info", cat: "Actividades", msg: `${f.numero} sin actividad asignada`, detalle: "Necesario para el desglose por actividad en modelos trimestrales." });
+  });
+
+  // ── 9. RETENCIÓN IRPF ──
+  emitidas.filter(f => f.tipoDoc !== "venta_tienda").forEach(f => {
+    if ((f.retencionPct || 0) > 0) {
+      const pct = parseFloat(f.retencionPct);
+      if (![7, 15].includes(pct) && pct !== 1 && pct !== 2 && pct !== 19 && pct !== 20) {
+        alertas.push({ tipo: "warn", cat: "IRPF", msg: `Retención atípica ${pct}% en ${f.numero}`, detalle: "Tipos habituales: 7% (nuevos autónomos primeros 3 años), 15% (general). Verifica si es correcto." });
+      }
+    }
+  });
+
+  // ── 10. RESUMEN ──
+  const errores = alertas.filter(a => a.tipo === "error").length;
+  const avisos = alertas.filter(a => a.tipo === "warn").length;
+  const info = alertas.filter(a => a.tipo === "info").length;
+  let nota = 10;
+  nota -= errores * 2;
+  nota -= avisos * 0.5;
+  nota -= info * 0.1;
+  nota = Math.max(0, Math.min(10, nota));
+
+  return { alertas, errores, avisos, info, nota: Math.round(nota * 10) / 10, totalFacturas: todas.length, totalEmitidas: emitidas.length, totalRecibidas: recibidas.length, conHash: conHash.length, sinHash: sinHash.length };
+}
+
+function VistaAuditoria({ facturas }) {
+  const [resultado, setResultado] = useState(null);
+  const [filtro, setFiltro] = useState("todos");
+
+  const ejecutar = () => { setResultado(ejecutarAuditoria(facturas)); };
+
+  useEffect(() => { if (facturas.length > 0) ejecutar(); }, []);
+
+  if (!resultado) return (
+    <div className="text-center py-20">
+      <div className="text-5xl mb-4">🛡️</div>
+      <h2 className="text-xl font-black text-gray-800 mb-2">Auditoría contable y VeriFactu</h2>
+      <p className="text-sm text-gray-500 mb-6 max-w-md mx-auto">Analiza tus facturas buscando errores de numeración, NIF, IVA, duplicados, integridad de la cadena VeriFactu y más.</p>
+      <button onClick={ejecutar} className="bg-slate-900 text-white px-8 py-3 rounded-xl font-black text-sm hover:bg-slate-700">Ejecutar auditoría</button>
+    </div>
+  );
+
+  const r = resultado;
+  const notaColor = r.nota >= 8 ? "text-emerald-600" : r.nota >= 5 ? "text-amber-600" : "text-rose-600";
+  const notaBg = r.nota >= 8 ? "from-emerald-50 to-emerald-100 border-emerald-200" : r.nota >= 5 ? "from-amber-50 to-amber-100 border-amber-200" : "from-rose-50 to-rose-100 border-rose-200";
+  const filtradas = filtro === "todos" ? r.alertas : r.alertas.filter(a => a.tipo === filtro);
+  const cats = [...new Set(r.alertas.map(a => a.cat))];
+
+  return (
+    <div className="space-y-6">
+      {/* Cabecera con nota */}
+      <div className={`bg-gradient-to-br ${notaBg} border rounded-2xl p-6`}>
+        <div className="flex items-center justify-between flex-wrap gap-4">
+          <div>
+            <h2 className="text-xl font-black text-gray-900 mb-1">Resultado de auditoría</h2>
+            <p className="text-xs text-gray-500">{r.totalFacturas} facturas analizadas ({r.totalEmitidas} emitidas, {r.totalRecibidas} recibidas)</p>
+          </div>
+          <div className="text-center">
+            <div className={`text-5xl font-black font-mono ${notaColor}`}>{r.nota}</div>
+            <div className="text-xs font-bold text-gray-500">/10</div>
+          </div>
+        </div>
+        <div className="grid grid-cols-4 gap-3 mt-4">
+          {[
+            { label: "Errores críticos", v: r.errores, color: "bg-rose-600", text: "text-rose-700" },
+            { label: "Avisos", v: r.avisos, color: "bg-amber-500", text: "text-amber-700" },
+            { label: "Informativo", v: r.info, color: "bg-sky-500", text: "text-sky-700" },
+            { label: "Cadena VeriFactu", v: `${r.conHash}/${r.totalEmitidas}`, color: "bg-emerald-600", text: "text-emerald-700" },
+          ].map(item => (
+            <div key={item.label} className="bg-white bg-opacity-70 rounded-xl p-3 text-center">
+              <div className={`text-2xl font-black font-mono ${item.text}`}>{item.v}</div>
+              <div className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">{item.label}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Filtros */}
+      <div className="flex gap-2 flex-wrap">
+        {[
+          { id: "todos", label: `Todos (${r.alertas.length})` },
+          { id: "error", label: `Errores (${r.errores})`, color: "bg-rose-100 text-rose-700 border-rose-300" },
+          { id: "warn", label: `Avisos (${r.avisos})`, color: "bg-amber-100 text-amber-700 border-amber-300" },
+          { id: "info", label: `Info (${r.info})`, color: "bg-sky-100 text-sky-700 border-sky-300" },
+        ].map(f => (
+          <button key={f.id} onClick={() => setFiltro(f.id)}
+            className={`px-3 py-1.5 text-xs font-bold rounded-lg border transition-all ${filtro === f.id ? (f.color || "bg-slate-900 text-white border-slate-900") : "bg-white text-gray-600 border-gray-200 hover:border-gray-400"}`}>
+            {f.label}
+          </button>
+        ))}
+        <div className="flex-1"/>
+        <button onClick={ejecutar} className="px-3 py-1.5 text-xs font-bold rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200">Volver a analizar</button>
+      </div>
+
+      {/* Lista de alertas por categoría */}
+      {filtradas.length === 0 ? (
+        <div className="text-center py-12 bg-white border border-gray-100 rounded-2xl">
+          <div className="text-4xl mb-2">✅</div>
+          <div className="text-sm font-semibold text-gray-500">Sin alertas en esta categoría</div>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {cats.filter(c => filtradas.some(a => a.cat === c)).map(cat => (
+            <div key={cat} className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+              <div className="px-4 py-2.5 bg-gray-50 border-b border-gray-200">
+                <span className="text-xs font-black text-gray-600 uppercase tracking-wider">{cat}</span>
+                <span className="text-xs text-gray-400 ml-2">({filtradas.filter(a => a.cat === cat).length})</span>
+              </div>
+              <div className="divide-y divide-gray-100">
+                {filtradas.filter(a => a.cat === cat).map((a, i) => (
+                  <div key={i} className="px-4 py-3 flex gap-3 items-start">
+                    <div className={`w-2 h-2 rounded-full mt-1.5 flex-shrink-0 ${a.tipo === "error" ? "bg-rose-500" : a.tipo === "warn" ? "bg-amber-500" : "bg-sky-400"}`}/>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-semibold text-gray-800">{a.msg}</div>
+                      <div className="text-xs text-gray-500 mt-0.5">{a.detalle}</div>
+                    </div>
+                    <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-md flex-shrink-0 ${a.tipo === "error" ? "bg-rose-100 text-rose-700" : a.tipo === "warn" ? "bg-amber-100 text-amber-700" : "bg-sky-100 text-sky-700"}`}>
+                      {a.tipo === "error" ? "CRÍTICO" : a.tipo === "warn" ? "AVISO" : "INFO"}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Nota legal */}
+      <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 text-xs text-slate-500 space-y-1">
+        <strong className="text-slate-700">Aviso legal:</strong> Esta auditoría es orientativa y automatizada. No sustituye la revisión de un asesor fiscal colegiado. ContaAuto implementa medidas preparatorias para VeriFactu (hash chain SHA-256, QR, inmutabilidad) pero NO es un software certificado por la AEAT. La obligatoriedad para autónomos entra en vigor el 1 de julio de 2027. Consulta con tu asesor la necesidad de migrar a un SIF homologado.
+      </div>
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════
+// FORMULARIO: VENTAS DE TIENDA - RESUMEN MENSUAL
+// ════════════════════════════════════════════════════════════
+
+const MESES_NOMBRE = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
+
+function VentaTiendaForm({ facturas, onSave, onCancel, initial }) {
+  const hoy = new Date();
+  const mesAnt = hoy.getMonth() === 0 ? 11 : hoy.getMonth() - 1;
+  const anioAnt = hoy.getMonth() === 0 ? hoy.getFullYear() - 1 : hoy.getFullYear();
+
+  const [mes, setMes] = useState(() => initial ? new Date(initial.fecha).getMonth() : mesAnt);
+  const [anio, setAnio] = useState(() => initial ? new Date(initial.fecha).getFullYear() : anioAnt);
+  const [subtotal, setSubtotal] = useState(() => {
+    if (!initial) return "";
+    const base = (initial.lineas||[])[0]?.precioUnitario || 0;
+    return base > 0 ? String(base) : "";
+  });
+  const [impuesto, setImpuesto] = useState(() => initial ? String(initial.impuestoManual || "") : "");
+  const [coste, setCoste] = useState(() => initial ? String(initial.costeMercancia || "") : "");
+  const [notas, setNotas] = useState(() => initial?.notas || "");
+
+  const sub = parseFloat(subtotal) || 0;
+  const imp = parseFloat(impuesto) || 0;
+  const cos = parseFloat(coste) || 0;
+  const totalVenta = sub + imp;
+  const beneficio = sub - cos;
+
+  // Verificar si ya existe un registro para ese mes
+  const yaExiste = facturas.some(f =>
+    f.tipoDoc === "venta_tienda" &&
+    new Date(f.fecha).getMonth() === mes &&
+    new Date(f.fecha).getFullYear() === anio &&
+    (!initial || f.id !== initial.id)
+  );
+
+  const save = () => {
+    if (sub <= 0) { alert("El subtotal debe ser mayor que 0."); return; }
+    if (yaExiste) { alert("Ya existe un registro de ventas de tienda para " + MESES_NOMBRE[mes] + " " + anio + "."); return; }
+    // Ultimo dia del mes seleccionado
+    const fecha = new Date(anio, mes + 1, 0).toISOString().split("T")[0];
+    const periodo = MESES_NOMBRE[mes] + " " + anio;
+    onSave({
+      modo: "emitida",
+      tipo: "venta",
+      tipoDoc: "venta_tienda",
+      numero: "TIENDA-" + anio + "/" + String(mes + 1).padStart(2, "0"),
+      fecha,
+      cliente: "Ventas Tienda (resumen)",
+      nif: "",
+      actividad: "Tienda",
+      lineas: [{ descripcion: "Ventas tienda " + periodo, cantidad: 1, precioUnitario: sub, tipoIVA: 0, exento: true, descuento: 0, aplicarRecargo: false }],
+      retencionPct: 0,
+      aplicarRecargo: false,
+      notas,
+      cobrado: true,
+      pagado: true,
+      costeMercancia: cos,
+      impuestoManual: imp,
+    });
+  };
+
+  const fmt = (n) => n.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " \u20ac";
+
+  return (
+    <div className="bg-white rounded-2xl border border-gray-200 p-6 max-w-3xl mx-auto shadow-sm">
+      {/* Cabecera */}
+      <div className="mb-6">
+        <div className="flex items-center gap-2 mb-1">
+          <span className="bg-violet-600 text-white text-xs font-black px-2.5 py-1 rounded-lg uppercase tracking-wide">Ventas de tienda</span>
+          <span className="text-xs text-gray-400">Resumen mensual</span>
+        </div>
+        <h2 className="text-xl font-black text-gray-900">{initial ? "Editar ventas de tienda" : "Registrar ventas mensuales de tienda"}</h2>
+        <p className="text-xs text-gray-400 mt-0.5">Introduce los totales del mes tal como salen de tu sistema de caja</p>
+      </div>
+
+      {/* Selector mes/anio */}
+      <div className="grid grid-cols-2 gap-4 mb-6">
+        <div>
+          <label className="text-xs font-semibold text-gray-500 block mb-1.5">Mes</label>
+          <select className="w-full border rounded-xl px-3 py-2.5 text-sm font-semibold focus:ring-2 focus:ring-violet-300 outline-none"
+            value={mes} onChange={e => setMes(parseInt(e.target.value))}>
+            {MESES_NOMBRE.map((m, i) => <option key={i} value={i}>{m}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="text-xs font-semibold text-gray-500 block mb-1.5">Ano</label>
+          <input type="number" min="2020" max="2040" className="w-full border rounded-xl px-3 py-2.5 text-sm font-mono font-semibold focus:ring-2 focus:ring-violet-300 outline-none"
+            value={anio} onChange={e => setAnio(parseInt(e.target.value))}/>
+        </div>
+      </div>
+
+      {yaExiste && (
+        <div className="bg-amber-50 border border-amber-300 text-amber-800 text-sm px-4 py-3 rounded-xl mb-5 font-semibold">
+          Ya existe un registro de ventas para {MESES_NOMBRE[mes]} {anio}. Si continuas se rechazara. Edita el registro existente o cambia el mes.
+        </div>
+      )}
+
+      {/* Campos de importes */}
+      <div className="space-y-4 mb-6">
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="text-xs font-semibold text-gray-600 block mb-1.5">Subtotal (ventas sin impuesto) *</label>
+            <div className="relative">
+              <input type="number" min="0" step="0.01"
+                className="w-full border-2 border-violet-200 rounded-xl px-3 py-3 text-sm font-mono font-bold bg-violet-50 focus:ring-2 focus:ring-violet-400 focus:border-violet-400 outline-none"
+                placeholder="0.00" value={subtotal} onChange={e => setSubtotal(e.target.value)}/>
+              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-violet-400 text-sm font-bold">{"\u20ac"}</span>
+            </div>
+            <p className="text-xs text-gray-400 mt-1">Base imponible total del mes</p>
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-gray-600 block mb-1.5">Impuesto (IVA total) *</label>
+            <div className="relative">
+              <input type="number" min="0" step="0.01"
+                className="w-full border-2 border-sky-200 rounded-xl px-3 py-3 text-sm font-mono font-bold bg-sky-50 focus:ring-2 focus:ring-sky-400 focus:border-sky-400 outline-none"
+                placeholder="0.00" value={impuesto} onChange={e => setImpuesto(e.target.value)}/>
+              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sky-400 text-sm font-bold">{"\u20ac"}</span>
+            </div>
+            <p className="text-xs text-gray-400 mt-1">Importe total del IVA (sin desglosar)</p>
+          </div>
+        </div>
+
+        <div>
+          <label className="text-xs font-semibold text-gray-600 block mb-1.5">Coste de mercancia *</label>
+          <div className="relative">
+            <input type="number" min="0" step="0.01"
+              className="w-full border-2 border-rose-200 rounded-xl px-3 py-3 text-sm font-mono font-bold bg-rose-50 focus:ring-2 focus:ring-rose-400 focus:border-rose-400 outline-none"
+              placeholder="0.00" value={coste} onChange={e => setCoste(e.target.value)}/>
+            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-rose-400 text-sm font-bold">{"\u20ac"}</span>
+          </div>
+          <p className="text-xs text-gray-400 mt-1">Lo que te costo comprar la mercancia vendida este mes</p>
+        </div>
+
+        <div>
+          <label className="text-xs font-semibold text-gray-600 block mb-1.5">Notas (opcional)</label>
+          <textarea className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:ring-2 focus:ring-slate-300 outline-none resize-none" rows={2}
+            placeholder="Observaciones, incidencias del mes..." value={notas} onChange={e => setNotas(e.target.value)}/>
+        </div>
+      </div>
+
+      {/* Resumen calculado */}
+      {sub > 0 && (
+        <div className="bg-gradient-to-br from-violet-50 to-indigo-50 border border-violet-200 rounded-xl p-5 mb-6">
+          <div className="text-xs font-black text-violet-700 uppercase tracking-wider mb-3">Resumen - {MESES_NOMBRE[mes]} {anio}</div>
+          <div className="space-y-2 text-sm">
+            <div className="flex justify-between text-gray-700"><span>Subtotal (sin impuesto)</span><span className="font-bold font-mono">{fmt(sub)}</span></div>
+            <div className="flex justify-between text-gray-700"><span>Impuesto (IVA)</span><span className="font-bold font-mono text-sky-700">+{fmt(imp)}</span></div>
+            <div className="flex justify-between text-gray-700 border-t border-violet-200 pt-2"><span className="font-bold">Total venta</span><span className="font-black font-mono text-lg">{fmt(totalVenta)}</span></div>
+            <div className="flex justify-between text-gray-700 mt-3 border-t border-violet-200 pt-2"><span>Coste mercancia</span><span className="font-bold font-mono text-rose-600">-{fmt(cos)}</span></div>
+            <div className={`flex justify-between text-lg font-black border-t-2 border-violet-300 pt-2 mt-2 ${beneficio >= 0 ? "text-emerald-700" : "text-rose-700"}`}>
+              <span>Beneficio</span><span className="font-mono">{fmt(beneficio)}</span>
+            </div>
+            {sub > 0 && cos > 0 && (
+              <div className="text-xs text-violet-600 text-right">Margen: {((beneficio / sub) * 100).toFixed(1)}%</div>
+            )}
+          </div>
+        </div>
+      )}
+
+      <div className="flex gap-3 justify-end">
+        <button onClick={onCancel} className="px-5 py-2.5 text-sm font-semibold border rounded-xl text-gray-600 hover:bg-gray-50">Cancelar</button>
+        <button onClick={save} disabled={yaExiste || sub <= 0}
+          className={`px-6 py-2.5 text-sm font-black rounded-xl shadow-lg ${yaExiste || sub <= 0 ? "bg-gray-300 text-gray-500 cursor-not-allowed" : "bg-violet-600 text-white hover:bg-violet-500"}`}>
+          {initial ? "Guardar cambios" : "Registrar ventas"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // Wrapper que decide qué formulario mostrar según modo
 function FacturaForm({ actividades, facturas, onSave, onCancel, initial, logo, setLogo, contactos=[], userId }) {
-  const [modo, setModo] = useState(() => initial?.modo || "emitida");
+  const [modo, setModo] = useState(() => {
+    if (initial?.tipoDoc === "venta_tienda") return "tienda";
+    return initial?.modo || "emitida";
+  });
   if (!initial) {
     return (
       <div className="max-w-5xl mx-auto">
         {/* Selector de modo */}
-        <div className="grid grid-cols-2 gap-4 mb-6">
+        <div className="grid grid-cols-3 gap-4 mb-6">
           {[
             { m:"emitida",  label:"Crear factura de empresa",    sub:"Facturas que tú emites a clientes · Numeración DC-"+cy+"/NNNN · Con logotipo", color:"emerald", icon:"🧾" },
             { m:"recibida", label:"Registrar documento recibido", sub:"Facturas de proveedores, autofacturas (Amazon, Ría, Wester...), tickets", color:"rose", icon:"📥" },
+            { m:"tienda",   label:"Ventas de tienda",            sub:"Resumen mensual · Subtotal, impuesto, coste y beneficio", color:"violet", icon:"🏪" },
           ].map(opt => (
             <button key={opt.m} onClick={() => setModo(opt.m)}
               className={`text-left p-5 rounded-2xl border-2 transition-all ${modo===opt.m
-                ? opt.m==="emitida"
-                  ? "border-emerald-500 bg-emerald-50 shadow-md"
-                  : "border-rose-500 bg-rose-50 shadow-md"
+                ? opt.m==="emitida" ? "border-emerald-500 bg-emerald-50 shadow-md"
+                : opt.m==="recibida" ? "border-rose-500 bg-rose-50 shadow-md"
+                : "border-violet-500 bg-violet-50 shadow-md"
                 : "border-gray-200 bg-white hover:border-gray-300"}`}>
               <div className="text-2xl mb-2">{opt.icon}</div>
-              <div className={`font-black text-base ${modo===opt.m ? opt.m==="emitida"?"text-emerald-800":"text-rose-800" : "text-gray-800"}`}>{opt.label}</div>
+              <div className={`font-black text-base ${modo===opt.m
+                ? opt.m==="emitida"?"text-emerald-800":opt.m==="recibida"?"text-rose-800":"text-violet-800"
+                : "text-gray-800"}`}>{opt.label}</div>
               <div className="text-xs text-gray-500 mt-1 leading-relaxed">{opt.sub}</div>
             </button>
           ))}
         </div>
         {modo==="emitida"
           ? <FacturaEmitidaForm actividades={actividades} facturas={facturas} onSave={onSave} onCancel={onCancel} logo={logo} setLogo={setLogo} contactos={contactos}/>
-          : <DocumentoRecibidoForm actividades={actividades} onSave={onSave} onCancel={onCancel} contactos={contactos} userId={userId}/>
+          : modo==="recibida"
+          ? <DocumentoRecibidoForm actividades={actividades} onSave={onSave} onCancel={onCancel} contactos={contactos} userId={userId}/>
+          : <VentaTiendaForm facturas={facturas} onSave={onSave} onCancel={onCancel}/>
         }
       </div>
     );
   }
-  // Edición: usa el formulario correspondiente al modo original
+  // Edición: usa el formulario correspondiente al modo/tipo original
+  if (initial.tipoDoc === "venta_tienda") return <VentaTiendaForm facturas={facturas} onSave={onSave} onCancel={onCancel} initial={initial}/>;
   return initial.modo === "emitida"
     ? <FacturaEmitidaForm actividades={actividades} facturas={facturas} onSave={onSave} onCancel={onCancel} initial={initial} logo={logo} setLogo={setLogo} contactos={contactos}/>
     : <DocumentoRecibidoForm actividades={actividades} onSave={onSave} onCancel={onCancel} initial={initial} contactos={contactos} userId={userId}/>;
@@ -2246,7 +2722,8 @@ function ListaFacturas({ facturas, logo, onEdit, onDelete, onView, tipoFiltro, p
   );
   const tots = useMemo(() => filtered.reduce((acc,f) => {
     const t=calcFactura(f.lineas,f.retencionPct,f.aplicarRecargo);
-    if(f.tipo==="venta"){acc.ingresos+=t.totalBase;acc.ivaRep+=t.totalIVA;}else{acc.gastos+=t.totalBase;acc.ivaSop+=t.totalIVA;}
+    const ivaReal = f.tipoDoc === "venta_tienda" ? (parseFloat(f.impuestoManual)||0) : t.totalIVA;
+    if(f.tipo==="venta"){acc.ingresos+=t.totalBase;acc.ivaRep+=ivaReal;}else{acc.gastos+=t.totalBase;acc.ivaSop+=ivaReal;}
     return acc;
   },{ingresos:0,gastos:0,ivaRep:0,ivaSop:0}), [filtered]);
 
@@ -2275,13 +2752,22 @@ function ListaFacturas({ facturas, logo, onEdit, onDelete, onView, tipoFiltro, p
               <tbody>
                 {filtered.map(f => {
                   const t=calcFactura(f.lineas,f.retencionPct,f.aplicarRecargo);
+                  const esTienda = f.tipoDoc === "venta_tienda";
+                  const ivaReal = esTienda ? (parseFloat(f.impuestoManual)||0) : t.totalIVA;
+                  const totalReal = esTienda ? (t.totalBase + ivaReal) : t.total;
                   const isV=f.tipo==="venta";
                   const pendiente = isV ? !f.cobrado : !f.pagado;
                   return (
                     <tr key={f.id} className={`border-t border-gray-100 hover:bg-slate-50 cursor-pointer group transition-colors ${pendiente?"bg-orange-50/20":""}`} onClick={() => onView(f)}>
-                      <td className="py-2.5 px-3" onClick={e=>e.stopPropagation()}><Tag color={isV?"green":"red"}>{isV?"Venta":"Gasto"}</Tag></td>
+                      <td className="py-2.5 px-3" onClick={e=>e.stopPropagation()}><Tag color={esTienda?"violet":isV?"green":"red"}>{esTienda?"Tienda":isV?"Venta":"Gasto"}</Tag></td>
                       <td className="py-2.5 px-3 font-mono text-xs font-black text-gray-600">
                         <div className="flex items-center gap-1">
+                          {f.inmutable && (
+                            <svg title="VeriFactu: Factura inmutable" className="w-3.5 h-3.5 text-emerald-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
+                            </svg>
+                          )}
+                          {f.esRectificativa && <span className="text-orange-600 font-black" title="Factura rectificativa">R</span>}
                           {f.numero}
                           {f.documento_url && (
                             <svg title="Tiene documento adjunto" className="w-3 h-3 text-blue-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -2294,9 +2780,9 @@ function ListaFacturas({ facturas, logo, onEdit, onDelete, onView, tipoFiltro, p
                       <td className="py-2.5 px-3"><div className="font-semibold text-gray-800 truncate max-w-36">{f.cliente}</div>{f.nif&&<div className="text-xs text-gray-400 font-mono">{f.nif}</div>}</td>
                       <td className="py-2.5 px-3"><Tag color="gray">{f.actividad}</Tag></td>
                       <td className="py-2.5 px-3 text-right font-semibold font-mono">{fmt(t.totalBase)}</td>
-                      <td className="py-2.5 px-3 text-right text-sky-600 font-mono text-xs">{fmt(t.totalIVA)}</td>
+                      <td className="py-2.5 px-3 text-right text-sky-600 font-mono text-xs">{fmt(ivaReal)}</td>
                       <td className="py-2.5 px-3 text-right text-orange-500 font-mono text-xs">{t.totalRetencion>0?fmt(t.totalRetencion):"-"}</td>
-                      <td className={`py-2.5 px-3 text-right font-black font-mono ${isV?"text-emerald-700":"text-rose-600"}`}>{fmt(t.total)}</td>
+                      <td className={`py-2.5 px-3 text-right font-black font-mono ${isV?"text-emerald-700":"text-rose-600"}`}>{fmt(totalReal)}</td>
                       <td className="py-2.5 px-3 text-right"><Tag color={pendiente?"orange":"green"}>{pendiente?(isV?"Pendiente cobro":"Pendiente pago"):(isV?"Cobrada":"Pagada")}</Tag></td>
                       <td className="py-2.5 px-3" onClick={e=>e.stopPropagation()}>
                         <div className="flex gap-1 justify-center">
@@ -4039,6 +4525,7 @@ const NAV_SIDEBAR = [
   { id:"contactos",    label:"Directorio",       group:"otros",     iconId:"contacts" },
   { id:"extracto",     label:"Asesor IA",        group:"otros",     iconId:"bolt" },
   { id:"lector",       label:"Lector Facturas",  group:"otros",     iconId:"scan" },
+  { id:"auditoria",    label:"Auditoría",        group:"otros",     iconId:"shield" },
 ];
 
 function NavIcon({ id }) {
@@ -4061,6 +4548,7 @@ function NavIcon({ id }) {
     bank:      <svg viewBox="0 0 20 20" fill="currentColor" className={cls}><path fillRule="evenodd" d="M4 4a2 2 0 00-2 2v1h16V6a2 2 0 00-2-2H4zm14 5H2v5a2 2 0 002 2h12a2 2 0 002-2V9zM4 13a1 1 0 011-1h1a1 1 0 110 2H5a1 1 0 01-1-1zm5-1a1 1 0 100 2h1a1 1 0 100-2H9z" clipRule="evenodd"/></svg>,
     hacienda:  <svg viewBox="0 0 20 20" fill="currentColor" className={cls}><path fillRule="evenodd" d="M6 2a2 2 0 00-2 2v12a2 2 0 002 2h8a2 2 0 002-2V7.414A2 2 0 0015.414 6L12 2.586A2 2 0 0010.586 2H6zm2 10a1 1 0 10-2 0v3a1 1 0 102 0v-3zm2-3a1 1 0 011 1v5a1 1 0 11-2 0v-5a1 1 0 011-1zm4-1a1 1 0 10-2 0v7a1 1 0 102 0V8z" clipRule="evenodd"/></svg>,
     scan:      <svg viewBox="0 0 20 20" fill="currentColor" className={cls}><path d="M3 4a1 1 0 011-1h3a1 1 0 010 2H5v2a1 1 0 01-2 0V4zM13 3a1 1 0 000 2h2v2a1 1 0 102 0V4a1 1 0 00-1-1h-3zM3 13a1 1 0 011 1v2h2a1 1 0 110 2H4a1 1 0 01-1-1v-3a1 1 0 011-1zm14 0a1 1 0 011 1v3a1 1 0 01-1 1h-3a1 1 0 110-2h2v-2a1 1 0 011-1z"/></svg>,
+    shield:    <svg viewBox="0 0 20 20" fill="currentColor" className={cls}><path fillRule="evenodd" d="M10 1.944A11.954 11.954 0 012.166 5C2.056 5.649 2 6.319 2 7c0 5.225 3.34 9.67 8 11.317C14.66 16.67 18 12.225 18 7c0-.682-.057-1.35-.166-2.001A11.954 11.954 0 0110 1.944zM11 14a1 1 0 11-2 0 1 1 0 012 0zm0-7a1 1 0 10-2 0v3a1 1 0 102 0V7z" clipRule="evenodd"/></svg>,
   };
   return icons[id] || null;
 }
@@ -5179,6 +5667,16 @@ function dbToFactura(f) {
     documento_nombre:f.documento_nombre || null,
     ibanEmpresa:     f.iban_empresa     || f.ibanEmpresa  || "",
     bancoEmpresa:    f.banco_empresa    || f.bancoEmpresa || "",
+    tipoDoc:         f.tipo_doc         || f.tipoDoc      || "factura",
+    costeMercancia:  f.coste_mercancia  ?? f.costeMercancia ?? 0,
+    impuestoManual:  f.impuesto_manual  ?? f.impuestoManual ?? 0,
+    verifactuHash:   f.verifactu_hash   || "",
+    verifactuHashPrevio: f.verifactu_hash_previo || "",
+    verifactuCadenaPos: f.verifactu_cadena_pos ?? 0,
+    verifactuFechaRegistro: f.verifactu_fecha_registro || null,
+    inmutable:       f.inmutable ?? false,
+    esRectificativa: f.es_rectificativa ?? false,
+    rectificaId:     f.rectifica_id || null,
   };
 }
 
@@ -5440,6 +5938,52 @@ function ContaAutoApp() {
 
   useEffect(() => { cargarDatos(); }, [cargarDatos]);
 
+  // ── VeriFactu: Hash chain SHA-256 ────────────────────────
+  const computeVerifactuHash = async (datos, hashPrevio) => {
+    // Datos para el hash según Orden HAC/1177/2024:
+    // NIF emisor + Numero factura + Fecha + Tipo + Cuota IVA + Importe total + Hash previo + Timestamp
+    const cadena = [
+      (datos.nifEmisor || "").trim().toUpperCase(),
+      (datos.numero || "").trim(),
+      (datos.fecha || ""),
+      (datos.tipoFactura || "F1"),
+      String(datos.cuotaIVA || 0),
+      String(datos.importeTotal || 0),
+      (hashPrevio || "0"),
+      (datos.timestamp || new Date().toISOString()),
+    ].join("|");
+    const encoder = new TextEncoder();
+    const buffer = await crypto.subtle.digest("SHA-256", encoder.encode(cadena));
+    const hashArray = Array.from(new Uint8Array(buffer));
+    return hashArray.map(b => b.toString(16).padStart(2,"0")).join("");
+  };
+
+  const getUltimoRegistroHash = async () => {
+    const uid = user?.id;
+    if (!uid) return { hash: "0", pos: 0 };
+    const { data, error } = await supabase.from("facturas")
+      .select("verifactu_hash, verifactu_cadena_pos")
+      .eq("user_id", uid)
+      .not("verifactu_hash", "eq", "")
+      .order("verifactu_cadena_pos", { ascending: false })
+      .limit(1)
+      .single();
+    if (error || !data) return { hash: "0", pos: 0 };
+    return { hash: data.verifactu_hash || "0", pos: data.verifactu_cadena_pos || 0 };
+  };
+
+  const registrarEvento = async (tipo, facturaId, facturaNumero, descripcion, datosExtra = {}) => {
+    const uid = user?.id;
+    if (!uid) return;
+    try {
+      await supabase.from("verifactu_eventos").insert({
+        user_id: uid, tipo, factura_id: facturaId || null,
+        factura_numero: facturaNumero || "",
+        descripcion, datos_extra: datosExtra,
+      });
+    } catch (e) { console.error("Error registrando evento:", e); }
+  };
+
   // ── Contactos DB ────────────────────────────────────────
   const saveContactoToDB = async (contacto) => {
     const uid = user?.id;
@@ -5497,6 +6041,11 @@ function ContaAutoApp() {
   // ── Facturas ──────────────────────────────────────────
   const saveFactura = async (f) => {
     const uid = user?.id;
+    const tot = calcFactura(f.lineas, f.retencionPct, f.aplicarRecargo);
+    const esEmitida = f.modo === "emitida" || f.tipo === "venta";
+    const esTienda = (f.tipoDoc || f.tipo_doc) === "venta_tienda";
+    const ivaReal = esTienda ? (parseFloat(f.impuestoManual ?? f.impuesto_manual ?? 0)||0) : tot.totalIVA;
+    const totalReal = esTienda ? (tot.totalBase + ivaReal) : tot.total;
     const row = {
       user_id: uid, tipo: f.tipo, numero: f.numero, fecha: f.fecha,
       actividad: f.actividad || "",
@@ -5515,31 +6064,78 @@ function ContaAutoApp() {
       notas: f.notas || "",
       documento_url: f.documento_url || null,
       documento_nombre: f.documento_nombre || null,
+      tipo_doc: f.tipoDoc || f.tipo_doc || "factura",
+      coste_mercancia: parseFloat(f.costeMercancia ?? f.coste_mercancia ?? 0) || 0,
+      impuesto_manual: parseFloat(f.impuestoManual ?? f.impuesto_manual ?? 0) || 0,
+      es_rectificativa: f.esRectificativa || f.es_rectificativa || false,
+      rectifica_id: f.rectificaId || f.rectifica_id || null,
     };
     if (editing) {
+      // VeriFactu: bloquear edición de facturas emitidas inmutables
+      if (editing.inmutable) {
+        await registrarEvento("intento_edicion", editing.id, editing.numero,
+          "Intento de edición bloqueado: factura inmutable (VeriFactu)");
+        alert("Esta factura emitida ya está registrada en la cadena VeriFactu y no se puede modificar.\n\nSi necesitas corregir algo, usa la opción 'Factura rectificativa'.");
+        return;
+      }
       const { data, error } = await supabase.from("facturas").update(row).eq("id", editing.id).select().single();
       if (error) { alert("Error al guardar: " + error.message); return; }
       if (data) {
         const updated = dbToFactura(data);
         setFacturas(p => p.map(x => x.id === editing.id ? updated : x));
         await upsertContactoConDB(updated);
+        await registrarEvento("edicion_factura", data.id, f.numero, "Factura editada (no inmutable)");
       }
       closeForm(); setView(f.tipo === "venta" ? "ventas" : "gastos");
     } else {
-      const { data, error } = await supabase.from("facturas").insert(row).select().single();
+      // VeriFactu: calcular hash chain para facturas nuevas emitidas
+      const timestamp = new Date().toISOString();
+      let hashData = {};
+      if (esEmitida) {
+        const ultimo = await getUltimoRegistroHash();
+        const nifEmisor = (f.nif || f.clienteNif || "").trim().toUpperCase();
+        const hash = await computeVerifactuHash({
+          nifEmisor, numero: f.numero, fecha: f.fecha,
+          tipoFactura: f.esRectificativa ? "R1" : "F1",
+          cuotaIVA: ivaReal.toFixed(2),
+          importeTotal: totalReal.toFixed(2),
+          timestamp,
+        }, ultimo.hash);
+        hashData = {
+          verifactu_hash: hash,
+          verifactu_hash_previo: ultimo.hash,
+          verifactu_cadena_pos: ultimo.pos + 1,
+          verifactu_fecha_registro: timestamp,
+          inmutable: true,
+        };
+      }
+      const { data, error } = await supabase.from("facturas").insert({ ...row, ...hashData }).select().single();
       if (error) { alert("Error al guardar: " + error.message); return; }
       if (data) {
         const saved = dbToFactura(data);
         setFacturas(p => [saved, ...p]);
         await upsertContactoConDB(saved);
+        await registrarEvento("alta_factura", data.id, f.numero,
+          esEmitida ? `Factura emitida registrada en cadena VeriFactu (pos: ${hashData.verifactu_cadena_pos})` : "Documento recibido registrado",
+          esEmitida ? { hash: hashData.verifactu_hash, pos: hashData.verifactu_cadena_pos } : {}
+        );
         closeForm(); setCreada(saved);
       }
     }
   };
   const delFactura = async (id) => {
+    // VeriFactu: buscar factura y verificar inmutabilidad
+    const factura = facturas.find(f => f.id === id);
+    if (factura?.inmutable) {
+      await registrarEvento("intento_borrado", id, factura.numero,
+        "Intento de eliminación bloqueado: factura inmutable (VeriFactu)");
+      alert("Esta factura está registrada en la cadena VeriFactu y NO se puede eliminar.\n\nSegún la normativa, solo puedes emitir una factura rectificativa.");
+      return;
+    }
     if (!confirm("¿Eliminar factura?")) return;
     const { error } = await supabase.from("facturas").delete().eq("id", id);
     if (error) { alert("Error al eliminar: " + error.message); return; }
+    await registrarEvento("eliminacion_factura", id, factura?.numero || "", "Factura eliminada (no inmutable)");
     setFacturas(p => p.filter(f => f.id !== id));
   };
   const marcarCobrado = async (id) => {
@@ -5719,7 +6315,7 @@ function ContaAutoApp() {
   const count347 = datos347.length;
 
   const inForm    = !!subview || view==="nueva";
-  const showPeriod = !inForm && !["actividades","trabajadores","nueva","mod347","contactos","extracto"].includes(view);
+  const showPeriod = !inForm && !["actividades","trabajadores","nueva","mod347","contactos","extracto","auditoria"].includes(view);
 
   const handleNuevaFactura = () => { setEditing(null); setSubview(null); setView("nueva"); };
 
@@ -5938,6 +6534,7 @@ function ContaAutoApp() {
                 {view==="activos"     && <SafeView name="Activos"><VistaActivos activos={activos} onNew={()=>{setEditing(null);setSubview("new-activo");}} onEdit={a=>{setEditing(a);setSubview("edit-activo");}} onDelete={delActivo} periodYear={periodYear}/></SafeView>}
                 {view==="recurrentes" && <SafeView name="Recurrentes"><VistaRecurrentes recurrentes={recurrentes} actividades={actividades} contactos={contactos} onNew={()=>{setEditing(null);setSubview("new-recurrente");}} onEdit={r=>{setEditing(r);setSubview("edit-recurrente");}} onDelete={delRecurrente} onGenerar={generarDesdeRecurrente}/></SafeView>}
                 {view==="lector"      && <SafeView name="Lector Facturas"><VistaLectorIA actividades={actividades} onFacturaExtraida={f=>{window.__plantillaRecurrente=f;setEditing(null);setView("nueva");setSubview("nueva-gasto");}}/></SafeView>}
+                {view==="auditoria"   && <VistaAuditoria facturas={facturas}/>}
               </>
             )}
 
