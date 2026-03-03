@@ -534,6 +534,77 @@ function downloadPDF(html, filename) {
 }
 
 // ════════════════════════════════════════════════════════════
+// HELPER IA: llamada centralizada con API key
+// ════════════════════════════════════════════════════════════
+
+function getAIKey() {
+  try { return localStorage.getItem("contaauto_ai_key") || ""; } catch { return ""; }
+}
+function setAIKey(key) {
+  try { localStorage.setItem("contaauto_ai_key", key.trim()); } catch { /* noop */ }
+}
+
+async function callAI({ messages, max_tokens = 2000, model = "claude-sonnet-4-20250514" }) {
+  const key = getAIKey();
+  if (!key) throw new Error("NO_KEY");
+  const resp = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": key,
+      "anthropic-version": "2023-06-01",
+    },
+    body: JSON.stringify({ model, max_tokens, messages })
+  });
+  if (!resp.ok) {
+    const body = await resp.text();
+    if (resp.status === 401) throw new Error("API_KEY_INVALID");
+    throw new Error(`Error API ${resp.status}: ${body}`);
+  }
+  const data = await resp.json();
+  return (data.content || []).filter(b => b.type === "text").map(b => b.text).join("\n");
+}
+
+function ConfigAPIKey({ onClose }) {
+  const [key, setKey] = useState(getAIKey());
+  const [test, setTest] = useState(null);
+  const doTest = async () => {
+    setTest("testing");
+    setAIKey(key);
+    try {
+      await callAI({ messages: [{ role: "user", content: "Di solo OK" }], max_tokens: 10 });
+      setTest("ok");
+    } catch { setTest("fail"); }
+  };
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(15,23,42,0.6)", backdropFilter: "blur(6px)" }}>
+      <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden">
+        <div className="bg-slate-900 text-white p-5">
+          <h3 className="font-black text-lg">Configurar clave API</h3>
+          <p className="text-xs text-slate-400 mt-1">Necesaria para las funciones de IA (lector de facturas, asesor fiscal, extracto bancario).</p>
+        </div>
+        <div className="p-5 space-y-4">
+          <div>
+            <label className="text-xs font-bold text-gray-600 block mb-1">Clave API de Anthropic</label>
+            <input type="password" value={key} onChange={e => setKey(e.target.value)} placeholder="sk-ant-..." className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm font-mono focus:ring-2 focus:ring-indigo-300 outline-none"/>
+            <p className="text-xs text-gray-400 mt-1">Consíguela en console.anthropic.com. Se guarda solo en tu navegador.</p>
+          </div>
+          {test === "ok" && <div className="text-sm text-emerald-700 bg-emerald-50 px-3 py-2 rounded-lg font-semibold">Conexión correcta</div>}
+          {test === "fail" && <div className="text-sm text-rose-700 bg-rose-50 px-3 py-2 rounded-lg font-semibold">Clave inválida o sin saldo</div>}
+          <div className="flex gap-2">
+            <button onClick={doTest} disabled={!key.trim() || test === "testing"} className="flex-1 py-2.5 bg-indigo-600 text-white rounded-xl text-sm font-bold hover:bg-indigo-500 disabled:opacity-50">
+              {test === "testing" ? "Probando..." : "Probar conexión"}
+            </button>
+            <button onClick={() => { setAIKey(key); onClose(); }} className="flex-1 py-2.5 bg-slate-900 text-white rounded-xl text-sm font-bold hover:bg-slate-700">Guardar</button>
+          </div>
+          <button onClick={onClose} className="w-full text-xs text-gray-400 hover:text-gray-600 py-1">Cerrar</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════
 // UI BASE
 // ════════════════════════════════════════════════════════════
 
@@ -2277,17 +2348,12 @@ Estado actual de preparación. Qué falta para cumplir antes de julio 2027. Si e
 Escribe en español de España, tono profesional pero cercano. Tutea al cliente. Máximo 1500 palabras.`;
 
     try {
-      const resp = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 3000, messages: [{ role: "user", content: prompt }] })
-      });
-      if (!resp.ok) throw new Error(`Error API ${resp.status}: ${await resp.text()}`);
-      const data = await resp.json();
-      const txt = (data.content || []).filter(b => b.type === "text").map(b => b.text).join("\n");
+      const txt = await callAI({ messages: [{ role: "user", content: prompt }], max_tokens: 3000 });
       setIaResultado(txt);
     } catch (err) {
-      setIaError(err.message || "Error desconocido.");
+      if (err.message === "NO_KEY") setIaError("Configura tu clave API de Anthropic para usar el asesor IA. Pulsa el botón de configuración en la barra lateral.");
+      else if (err.message === "API_KEY_INVALID") setIaError("La clave API no es válida o no tiene saldo. Revísala en la configuración.");
+      else setIaError(err.message || "Error desconocido.");
     }
     setIaLoading(false);
   };
@@ -4239,22 +4305,13 @@ Lista de 5 a 7 acciones concretas y urgentes ordenadas por prioridad. Cada recom
 Escribe en un tono profesional, riguroso y técnico. No uses lenguaje condescendiente ni vago. Si no hay datos suficientes en alguna sección, indícalo con precisión.`;
 
     try {
-      const resp = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 2500,
-          messages: [{ role: "user", content: prompt }]
-        })
-      });
-      if (!resp.ok) throw new Error(`Error API ${resp.status}: ${await resp.text()}`);
-      const data = await resp.json();
-      const txt  = (data.content || []).filter(b => b.type === "text").map(b => b.text).join("\n");
+      const txt = await callAI({ messages: [{ role: "user", content: prompt }], max_tokens: 2500 });
       setAnalisis(txt);
       setFase("resultado");
     } catch (err) {
-      setErrMsg(err.message || "Error desconocido.");
+      if (err.message === "NO_KEY") setErrMsg("Configura tu clave API de Anthropic para usar el asesor IA. Ve a la sección Auditoría o pulsa el botón de configuración.");
+      else if (err.message === "API_KEY_INVALID") setErrMsg("Clave API inválida o sin saldo.");
+      else setErrMsg(err.message || "Error desconocido.");
       setFase("error");
     }
   };
@@ -5770,26 +5827,31 @@ function VistaActivos({ activos, onNew, onEdit, onDelete, periodYear }) {
 // MODULO 5: LECTOR DE FACTURAS CON IA
 // ════════════════════════════════════════════════════════════
 function VistaLectorIA({ actividades, onFacturaExtraida }) {
-  const [archivo, setArchivo] = React.useState(null);
-  const [cargando, setCargando] = React.useState(false);
-  const [resultado, setResultado] = React.useState(null);
-  const [error, setError] = React.useState("");
+  const [archivo, setArchivo] = useState(null);
+  const [preview, setPreview] = useState(null);
+  const [cargando, setCargando] = useState(false);
+  const [resultado, setResultado] = useState(null);
+  const [error, setError] = useState("");
+  const [showConfig, setShowConfig] = useState(false);
   const inputRef = React.useRef();
 
-  const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
-  const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
-
   const handleArchivo = (e) => {
-    const file = e.target.files[0];
+    const file = e.target.files?.[0];
     if (!file) return;
-    const ok = ["image/jpeg","image/png","application/pdf"].includes(file.type);
-    if (!ok) { setError("Formato no soportado. Usa JPG, PNG o PDF."); return; }
-    if (file.size > 5*1024*1024) { setError("El archivo supera los 5 MB."); return; }
+    const ok = ["image/jpeg","image/png","image/webp","application/pdf"].includes(file.type);
+    if (!ok) { setError("Formato no soportado. Usa JPG, PNG, WebP o PDF."); return; }
+    if (file.size > 10*1024*1024) { setError("El archivo supera los 10 MB."); return; }
     setArchivo(file); setError(""); setResultado(null);
+    if (file.type.startsWith("image/")) {
+      const r = new FileReader();
+      r.onload = ev => setPreview(ev.target.result);
+      r.readAsDataURL(file);
+    } else { setPreview(null); }
   };
 
   const analizar = async () => {
     if (!archivo) return;
+    if (!getAIKey()) { setShowConfig(true); return; }
     setCargando(true); setError(""); setResultado(null);
     try {
       const b64 = await new Promise((res,rej)=>{
@@ -5799,155 +5861,267 @@ function VistaLectorIA({ actividades, onFacturaExtraida }) {
         r.readAsDataURL(archivo);
       });
 
-      const media = archivo.type === "application/pdf" ? "application/pdf" : archivo.type;
-      const tipo = archivo.type === "application/pdf" ? "document" : "image";
+      const media = archivo.type;
+      const esDoc = archivo.type === "application/pdf";
 
-      const prompt = `Eres un asistente contable especializado. Analiza esta factura y extrae TODOS los datos en formato JSON estricto, sin texto adicional, sin markdown.
-Devuelve exactamente este objeto:
+      const prompt = `Eres un contable español experto. Analiza esta factura/documento y extrae TODOS los datos.
+
+IMPORTANTE - Determina el TIPO:
+- Si el documento es una factura que RECIBES de un proveedor (te cobran algo) = tipo "gasto"
+- Si el documento es una factura que TU EMITES a un cliente (te pagan) = tipo "venta"
+- Si es un ticket de compra, recibo de pago, factura de suministro = tipo "gasto"
+- Si no está claro, pon tipo = "gasto" por defecto
+
+Devuelve SOLO este JSON sin texto adicional, sin markdown, sin backticks:
 {
-  "numero": "numero de factura o vacio",
-  "fecha": "YYYY-MM-DD o vacio",
-  "tipo": "gasto",
-  "cliente": "nombre del emisor/proveedor",
-  "nif": "NIF o CIF del emisor",
-  "email": "",
-  "telefono": "",
-  "direccion": "",
+  "numero": "número de factura extraído",
+  "fecha": "YYYY-MM-DD",
+  "tipo": "venta o gasto",
+  "descripcionBreve": "descripción corta de qué es esta factura",
+  "cliente": "nombre del emisor si es gasto, o del receptor si es venta",
+  "nif": "NIF/CIF del emisor si es gasto, del receptor si es venta",
+  "direccion": "dirección si aparece",
   "actividad": "${actividades[0]||"General"}",
   "lineas": [
-    { "descripcion": "concepto", "cantidad": 1, "precio": 0.00, "iva": 21 }
+    { "descripcion": "concepto exacto", "cantidad": 1, "precio": 0.00, "iva": 21 }
   ],
   "retencionPct": 0,
   "notas": ""
 }
-Solo devuelve el JSON. No expliques nada.`;
 
-      const body = {
-        model: "claude-sonnet-4-6",
-        max_tokens: 1024,
-        messages: [{
-          role: "user",
-          content: [
-            { type: tipo === "document" ? "document" : "image",
-              source: { type: "base64", media_type: media, data: b64 }
-            },
-            { type: "text", text: prompt }
-          ]
-        }]
-      };
+Reglas:
+- precio = precio unitario SIN IVA
+- iva = porcentaje de IVA de esa línea (0, 4, 10 o 21)
+- Si hay varias líneas con distinto IVA, sepáralas
+- Si solo ves el total con IVA, calcula la base: base = total / (1 + iva/100)
+- retencionPct = porcentaje de IRPF si aparece
+- Solo devuelve el JSON`;
 
+      const content = [
+        { type: esDoc ? "document" : "image", source: { type: "base64", media_type: media, data: b64 } },
+        { type: "text", text: prompt }
+      ];
+
+      const key = getAIKey();
       const resp = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "anthropic-version": "2023-06-01" },
-        body: JSON.stringify(body)
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": key,
+          "anthropic-version": "2023-06-01",
+        },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 1500,
+          messages: [{ role: "user", content }]
+        })
       });
 
       if (!resp.ok) {
-        const err = await resp.json();
-        throw new Error(err.error?.message || "Error al llamar a la IA");
+        const errBody = await resp.json().catch(() => ({}));
+        if (resp.status === 401) throw new Error("Clave API inválida. Configúrala de nuevo.");
+        throw new Error(errBody.error?.message || `Error ${resp.status}`);
       }
 
       const data = await resp.json();
-      const texto = data.content.find(c=>c.type==="text")?.text || "";
+      const texto = (data.content || []).find(c => c.type === "text")?.text || "";
       const clean = texto.replace(/```json|```/g,"").trim();
       const factura = JSON.parse(clean);
       setResultado(factura);
     } catch(e) {
-      setError("No se pudo procesar el archivo: " + e.message);
+      if (e instanceof SyntaxError) setError("La IA no devolvió un formato válido. Intenta con otra foto más nítida.");
+      else setError(e.message || "Error al procesar.");
     } finally {
       setCargando(false);
     }
   };
 
-  const fmt = (lineas) => {
-    const total = (lineas||[]).reduce((s,l)=>{
-      const base = (l.cantidad||1)*(l.precio||0);
-      return s + base + base*(l.iva||0)/100;
-    },0);
-    return total.toLocaleString("es-ES",{minimumFractionDigits:2});
+  const updateRes = (key, val) => setResultado(prev => ({ ...prev, [key]: val }));
+  const updateLinea = (i, key, val) => setResultado(prev => {
+    const ls = [...(prev.lineas || [])];
+    ls[i] = { ...ls[i], [key]: val };
+    return { ...prev, lineas: ls };
+  });
+
+  const calcTotal = (lineas) => {
+    return (lineas || []).reduce((s,l) => {
+      const base = (parseFloat(l.cantidad)||1) * (parseFloat(l.precio)||0);
+      return s + base + base * (parseFloat(l.iva)||0) / 100;
+    }, 0);
   };
 
   return (
-    <div className="p-6 max-w-2xl mx-auto space-y-6">
-      <div>
-        <h2 className="text-xl font-bold text-slate-800">Lector de Facturas con IA</h2>
-        <p className="text-sm text-slate-500 mt-1">Sube una factura en PDF o imagen y la IA extrae todos los datos automaticamente.</p>
+    <div className="p-6 max-w-3xl mx-auto space-y-6">
+      {showConfig && <ConfigAPIKey onClose={() => setShowConfig(false)}/>}
+
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-xl font-bold text-slate-800">Lector de Facturas con IA</h2>
+          <p className="text-sm text-slate-500 mt-1">Sube una factura y la IA extrae los datos, detecta si es ingreso o gasto y la prepara para registrar.</p>
+        </div>
+        <button onClick={() => setShowConfig(true)} className="text-xs text-slate-500 hover:text-slate-700 border border-slate-200 rounded-lg px-3 py-1.5 flex items-center gap-1">
+          {getAIKey() ? <span className="w-2 h-2 rounded-full bg-emerald-500"/> : <span className="w-2 h-2 rounded-full bg-rose-400"/>}
+          API Key
+        </button>
       </div>
 
-      {/* Upload */}
+      {/* Upload zone */}
       <div
-        className="border-2 border-dashed border-slate-300 rounded-2xl p-10 text-center cursor-pointer hover:border-blue-400 hover:bg-blue-50 transition-colors"
-        onClick={()=>inputRef.current?.click()}
-        onDragOver={e=>{e.preventDefault();}}
-        onDrop={e=>{e.preventDefault();const f=e.dataTransfer.files[0];if(f){handleArchivo({target:{files:[f]}})}}}
+        className={`border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition-colors ${archivo ? "border-indigo-300 bg-indigo-50/30" : "border-slate-300 hover:border-blue-400 hover:bg-blue-50"}`}
+        onClick={() => inputRef.current?.click()}
+        onDragOver={e => e.preventDefault()}
+        onDrop={e => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) handleArchivo({ target: { files: [f] } }); }}
       >
-        <input ref={inputRef} type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden" onChange={handleArchivo}/>
+        <input ref={inputRef} type="file" accept=".pdf,.jpg,.jpeg,.png,.webp" className="hidden" onChange={handleArchivo}/>
         {archivo ? (
-          <div className="space-y-2">
-            <div className="text-3xl">📄</div>
-            <p className="font-semibold text-slate-700">{archivo.name}</p>
-            <p className="text-xs text-slate-400">{(archivo.size/1024).toFixed(0)} KB</p>
-            <button className="text-xs text-slate-400 hover:text-rose-500 underline" onClick={e=>{e.stopPropagation();setArchivo(null);setResultado(null);}}>Cambiar archivo</button>
+          <div className="flex items-center gap-4 justify-center">
+            {preview && <img src={preview} alt="preview" className="w-20 h-20 object-cover rounded-lg border border-slate-200 shadow-sm"/>}
+            <div className="text-left">
+              <p className="font-semibold text-slate-700">{archivo.name}</p>
+              <p className="text-xs text-slate-400">{(archivo.size/1024).toFixed(0)} KB</p>
+              <button className="text-xs text-rose-500 hover:text-rose-700 mt-1" onClick={e => { e.stopPropagation(); setArchivo(null); setResultado(null); setPreview(null); }}>Cambiar archivo</button>
+            </div>
           </div>
         ) : (
           <div className="space-y-2">
-            <div className="text-3xl text-slate-300">📂</div>
-            <p className="font-medium text-slate-600">Arrastra aqui o haz clic para seleccionar</p>
-            <p className="text-xs text-slate-400">PDF, JPG o PNG - Maximo 5 MB</p>
+            <svg className="w-12 h-12 mx-auto text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
+            <p className="font-medium text-slate-600">Arrastra o haz clic para subir factura</p>
+            <p className="text-xs text-slate-400">PDF, JPG, PNG o WebP - Máximo 10 MB</p>
           </div>
         )}
       </div>
 
-      {error && <p className="text-sm text-rose-600 bg-rose-50 px-4 py-3 rounded-xl">{error}</p>}
+      {error && <div className="text-sm text-rose-600 bg-rose-50 px-4 py-3 rounded-xl border border-rose-200">{error}</div>}
 
       {archivo && !cargando && !resultado && (
-        <button onClick={analizar} className="w-full bg-slate-900 text-white py-3 rounded-xl font-semibold hover:bg-slate-700 transition-colors">
+        <button onClick={analizar} className="w-full bg-gradient-to-r from-indigo-600 to-violet-600 text-white py-3.5 rounded-xl font-black text-sm hover:from-indigo-500 hover:to-violet-500 shadow-lg shadow-indigo-200 transition-all">
           Analizar con IA
         </button>
       )}
 
       {cargando && (
-        <div className="text-center py-8 space-y-3">
-          <div className="inline-block w-8 h-8 border-4 border-slate-200 border-t-slate-800 rounded-full animate-spin"/>
-          <p className="text-slate-600">Analizando la factura...</p>
+        <div className="text-center py-10 space-y-3">
+          <div className="inline-block w-10 h-10 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin"/>
+          <p className="text-sm font-semibold text-slate-600">Analizando la factura...</p>
+          <p className="text-xs text-slate-400">Extrayendo datos, detectando tipo de operación y líneas</p>
         </div>
       )}
 
+      {/* Resultado editable */}
       {resultado && (
-        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-          <div className="flex items-center justify-between px-4 py-3 bg-emerald-50 border-b border-emerald-100">
-            <span className="text-sm font-semibold text-emerald-800">Datos extraidos correctamente</span>
-            <span className="text-xs text-emerald-600">Revisa y confirma antes de guardar</span>
-          </div>
-          <div className="p-4 space-y-3 text-sm">
-            <div className="grid grid-cols-2 gap-2">
-              {[
-                ["Proveedor", resultado.cliente],
-                ["NIF/CIF", resultado.nif],
-                ["Numero factura", resultado.numero],
-                ["Fecha", resultado.fecha],
-              ].map(([k,v])=>(
-                <div key={k} className="bg-slate-50 rounded-lg p-2.5">
-                  <div className="text-xs text-slate-400 mb-0.5">{k}</div>
-                  <div className="font-medium text-slate-800">{v||"-"}</div>
-                </div>
-              ))}
-            </div>
+        <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
+          <div className={`px-5 py-4 flex items-center justify-between ${resultado.tipo === "venta" ? "bg-emerald-50 border-b border-emerald-100" : "bg-rose-50 border-b border-rose-100"}`}>
             <div>
-              <div className="text-xs text-slate-400 mb-1">Lineas ({(resultado.lineas||[]).length})</div>
-              {(resultado.lineas||[]).map((l,i)=>(
-                <div key={i} className="flex justify-between text-xs text-slate-600 py-1 border-b border-slate-100">
-                  <span className="truncate max-w-xs">{l.descripcion}</span>
-                  <span className="font-mono ml-4">{l.cantidad} x {(l.precio||0).toFixed(2)} EUR + {l.iva}% IVA</span>
-                </div>
-              ))}
-              <div className="text-right font-bold text-slate-800 mt-2">Total: {fmt(resultado.lineas)} EUR</div>
+              <span className="text-sm font-bold text-slate-800">Datos extraídos</span>
+              {resultado.descripcionBreve && <p className="text-xs text-slate-500 mt-0.5">{resultado.descripcionBreve}</p>}
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-slate-500">Tipo:</span>
+              <select value={resultado.tipo} onChange={e => updateRes("tipo", e.target.value)}
+                className={`text-sm font-bold rounded-lg px-3 py-1.5 border cursor-pointer ${resultado.tipo === "venta" ? "bg-emerald-100 text-emerald-800 border-emerald-300" : "bg-rose-100 text-rose-800 border-rose-300"}`}>
+                <option value="venta">Ingreso (venta)</option>
+                <option value="gasto">Gasto</option>
+              </select>
             </div>
           </div>
-          <div className="px-4 py-3 border-t border-slate-200 flex gap-3">
-            <button onClick={()=>{setResultado(null);setArchivo(null);}} className="flex-1 py-2 rounded-xl border border-slate-200 text-slate-600 text-sm hover:bg-slate-50">Descartar</button>
-            <button onClick={()=>onFacturaExtraida(resultado)} className="flex-1 py-2 rounded-xl bg-emerald-600 text-white text-sm hover:bg-emerald-700 font-semibold">Crear factura con estos datos</button>
+
+          <div className="p-5 space-y-4">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-bold text-slate-500 block mb-1">{resultado.tipo === "venta" ? "Cliente" : "Proveedor"}</label>
+                <input value={resultado.cliente || ""} onChange={e => updateRes("cliente", e.target.value)}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-200 outline-none"/>
+              </div>
+              <div>
+                <label className="text-xs font-bold text-slate-500 block mb-1">NIF/CIF</label>
+                <input value={resultado.nif || ""} onChange={e => updateRes("nif", e.target.value)}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-indigo-200 outline-none"/>
+              </div>
+              <div>
+                <label className="text-xs font-bold text-slate-500 block mb-1">Número factura</label>
+                <input value={resultado.numero || ""} onChange={e => updateRes("numero", e.target.value)}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-indigo-200 outline-none"/>
+              </div>
+              <div>
+                <label className="text-xs font-bold text-slate-500 block mb-1">Fecha</label>
+                <input type="date" value={resultado.fecha || ""} onChange={e => updateRes("fecha", e.target.value)}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-200 outline-none"/>
+              </div>
+              <div>
+                <label className="text-xs font-bold text-slate-500 block mb-1">Actividad</label>
+                <select value={resultado.actividad || actividades[0] || ""} onChange={e => updateRes("actividad", e.target.value)}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-200 outline-none">
+                  {actividades.map(a => <option key={a} value={a}>{a}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs font-bold text-slate-500 block mb-1">Retención IRPF (%)</label>
+                <input type="number" min="0" max="25" step="1" value={resultado.retencionPct || 0} onChange={e => updateRes("retencionPct", parseFloat(e.target.value) || 0)}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-200 outline-none"/>
+              </div>
+            </div>
+
+            {/* Líneas */}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-xs font-bold text-slate-500">Líneas ({(resultado.lineas || []).length})</label>
+                <button onClick={() => setResultado(prev => ({ ...prev, lineas: [...(prev.lineas||[]), { descripcion: "", cantidad: 1, precio: 0, iva: 21 }] }))}
+                  className="text-xs text-indigo-600 hover:text-indigo-800 font-bold">+ Añadir línea</button>
+              </div>
+              <div className="space-y-2">
+                {(resultado.lineas || []).map((l, i) => (
+                  <div key={i} className="flex gap-2 items-center bg-slate-50 rounded-lg p-2.5">
+                    <input value={l.descripcion || ""} onChange={e => updateLinea(i, "descripcion", e.target.value)} placeholder="Concepto"
+                      className="flex-1 min-w-0 border border-slate-200 rounded-md px-2 py-1.5 text-xs focus:ring-1 focus:ring-indigo-200 outline-none"/>
+                    <input type="number" value={l.cantidad ?? 1} onChange={e => updateLinea(i, "cantidad", parseFloat(e.target.value) || 0)} title="Cantidad"
+                      className="w-14 border border-slate-200 rounded-md px-2 py-1.5 text-xs text-center focus:ring-1 focus:ring-indigo-200 outline-none"/>
+                    <input type="number" step="0.01" value={l.precio ?? 0} onChange={e => updateLinea(i, "precio", parseFloat(e.target.value) || 0)} title="Precio sin IVA"
+                      className="w-20 border border-slate-200 rounded-md px-2 py-1.5 text-xs text-right font-mono focus:ring-1 focus:ring-indigo-200 outline-none"/>
+                    <select value={l.iva ?? 21} onChange={e => updateLinea(i, "iva", parseInt(e.target.value))} title="% IVA"
+                      className="w-16 border border-slate-200 rounded-md px-1 py-1.5 text-xs focus:ring-1 focus:ring-indigo-200 outline-none">
+                      <option value={0}>0%</option><option value={4}>4%</option><option value={10}>10%</option><option value={21}>21%</option>
+                    </select>
+                    {(resultado.lineas||[]).length > 1 && <button onClick={() => setResultado(prev => ({ ...prev, lineas: prev.lineas.filter((_,j)=>j!==i) }))} className="text-rose-400 hover:text-rose-600 text-sm px-1">✕</button>}
+                  </div>
+                ))}
+              </div>
+              <div className="text-right mt-3">
+                <span className="text-xs text-slate-500 mr-2">Total con IVA:</span>
+                <span className="text-lg font-black text-slate-900 font-mono">{calcTotal(resultado.lineas).toLocaleString("es-ES", { minimumFractionDigits: 2 })} EUR</span>
+              </div>
+            </div>
+
+            <div>
+              <label className="text-xs font-bold text-slate-500 block mb-1">Notas</label>
+              <input value={resultado.notas || ""} onChange={e => updateRes("notas", e.target.value)} placeholder="Observaciones..."
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-200 outline-none"/>
+            </div>
           </div>
+
+          <div className="px-5 py-4 border-t border-slate-200 bg-slate-50 flex gap-3">
+            <button onClick={() => { setResultado(null); setArchivo(null); setPreview(null); }}
+              className="flex-1 py-2.5 rounded-xl border border-slate-300 text-slate-600 text-sm font-semibold hover:bg-white">Descartar</button>
+            <button onClick={() => onFacturaExtraida(resultado)}
+              className={`flex-1 py-2.5 rounded-xl text-white text-sm font-black shadow-lg transition-all ${resultado.tipo === "venta" ? "bg-emerald-600 hover:bg-emerald-500 shadow-emerald-200" : "bg-indigo-600 hover:bg-indigo-500 shadow-indigo-200"}`}>
+              Crear como {resultado.tipo === "venta" ? "ingreso" : "gasto"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {!archivo && !resultado && (
+        <div className="grid grid-cols-3 gap-3">
+          {[
+            { icon: "📄", title: "Facturas de proveedores", desc: "Luz, internet, alquiler, material, servicios profesionales" },
+            { icon: "🧾", title: "Tickets de compra", desc: "Supermercado, gasolina, suministros de tienda" },
+            { icon: "📋", title: "Facturas emitidas", desc: "Tus facturas a clientes, para registrar ingresos" },
+          ].map(item => (
+            <div key={item.title} className="bg-white border border-slate-100 rounded-xl p-4 text-center">
+              <div className="text-2xl mb-2">{item.icon}</div>
+              <div className="text-xs font-bold text-slate-700">{item.title}</div>
+              <div className="text-[10px] text-slate-400 mt-1">{item.desc}</div>
+            </div>
+          ))}
         </div>
       )}
     </div>
@@ -6147,6 +6321,7 @@ function ContaAutoApp() {
   const [recurrentes,   setRecurrentes]  = useState([]); // logotipo Digital Conect
 
   const [pantallaBienvenida, setPantallaBienvenida] = useState(false);
+  const [showAPIConfig, setShowAPIConfig] = useState(false);
   const [view,       setView]       = useState("dashboard");
   const [subview,    setSubview]    = useState(null);
   const [editing,    setEditing]    = useState(null);
@@ -6675,6 +6850,7 @@ function ContaAutoApp() {
 
   return (
     <div className="flex h-screen overflow-hidden" style={{background:"#f1f5f9", fontFamily:"'DM Sans','Segoe UI',sans-serif"}}>
+      {showAPIConfig && <ConfigAPIKey onClose={() => setShowAPIConfig(false)}/>}
 
       {/* ══ SIDEBAR IZQUIERDO ══════════════════════════════ */}
       <aside className="flex flex-col flex-shrink-0 bg-slate-900 text-white overflow-y-auto"
@@ -6752,6 +6928,17 @@ function ContaAutoApp() {
 
         {/* Footer del sidebar */}
         <div className="px-4 py-4 border-t" style={{borderColor:"rgba(255,255,255,.07)"}}>
+          <button onClick={() => setShowAPIConfig(true)}
+            className="w-full flex items-center gap-2 py-2 px-3 rounded-xl text-xs font-semibold transition-colors mb-1"
+            style={{color:"rgba(255,255,255,.4)"}}
+            onMouseEnter={e=>{e.currentTarget.style.background="rgba(255,255,255,.06)";e.currentTarget.style.color="rgba(255,255,255,.7)"}}
+            onMouseLeave={e=>{e.currentTarget.style.background="transparent";e.currentTarget.style.color="rgba(255,255,255,.4)"}}>
+            <svg viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5 flex-shrink-0">
+              <path fillRule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clipRule="evenodd"/>
+            </svg>
+            Clave API (IA)
+            {getAIKey() ? <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 ml-auto"/> : <span className="w-1.5 h-1.5 rounded-full bg-rose-400 ml-auto"/>}
+          </button>
           <button onClick={() => setPantallaBienvenida(true)}
             className="w-full flex items-center gap-2 py-2 px-3 rounded-xl text-xs font-semibold transition-colors"
             style={{color:"rgba(255,255,255,.4)"}}
@@ -6849,7 +7036,34 @@ function ContaAutoApp() {
                 {view==="modelos"     && <SafeView name="Modelos Hacienda"><VistaModelos facturas={facturas} nominas={nominas} periodYear={periodYear}/></SafeView>}
                 {view==="activos"     && <SafeView name="Activos"><VistaActivos activos={activos} onNew={()=>{setEditing(null);setSubview("new-activo");}} onEdit={a=>{setEditing(a);setSubview("edit-activo");}} onDelete={delActivo} periodYear={periodYear}/></SafeView>}
                 {view==="recurrentes" && <SafeView name="Recurrentes"><VistaRecurrentes recurrentes={recurrentes} actividades={actividades} contactos={contactos} onNew={()=>{setEditing(null);setSubview("new-recurrente");}} onEdit={r=>{setEditing(r);setSubview("edit-recurrente");}} onDelete={delRecurrente} onGenerar={generarDesdeRecurrente}/></SafeView>}
-                {view==="lector"      && <SafeView name="Lector Facturas"><VistaLectorIA actividades={actividades} onFacturaExtraida={f=>{window.__plantillaRecurrente=f;setEditing(null);setView("nueva");setSubview("nueva-gasto");}}/></SafeView>}
+                {view==="lector"      && <SafeView name="Lector Facturas"><VistaLectorIA actividades={actividades} onFacturaExtraida={f=>{
+                  const mapped = {
+                    ...f,
+                    modo: f.tipo === "venta" ? "emitida" : "recibida",
+                    tipo: f.tipo === "venta" ? "venta" : "gasto",
+                    cliente: f.cliente || "",
+                    clienteNombre: f.cliente || "",
+                    clienteNif: f.nif || "",
+                    nif: f.nif || "",
+                    direccion: f.direccion || "",
+                    clienteDireccion: f.direccion || "",
+                    lineas: (f.lineas || []).map(l => ({
+                      descripcion: l.descripcion || "",
+                      cantidad: parseFloat(l.cantidad) || 1,
+                      precioUnitario: parseFloat(l.precio) || 0,
+                      tipoIVA: String(l.iva ?? 21),
+                      exento: false,
+                    })),
+                    retencionPct: parseFloat(f.retencionPct) || 0,
+                    actividad: f.actividad || actividades[0] || "",
+                    notas: f.notas || "",
+                    numero: f.numero || "",
+                    fecha: f.fecha || new Date().toISOString().slice(0,10),
+                  };
+                  setEditing(mapped);
+                  setView("nueva");
+                  setSubview(null);
+                }}/></SafeView>}
                 {view==="auditoria"   && <VistaAuditoria facturas={facturas} nominas={nominas}/>}
               </>
             )}
