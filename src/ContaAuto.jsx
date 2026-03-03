@@ -88,6 +88,24 @@ function calcFactura(lineas, retencionPct, aplicarRecargo) {
   return { totalBase, totalIVA, totalRecargo, totalRetencion, total: totalBase + totalIVA + totalRecargo - totalRetencion };
 }
 
+// Wrapper que devuelve totales REALES de cualquier factura,
+// incluyendo impuestoManual y costeMercancia de ventas de tienda
+function calcFacturaReal(f) {
+  const t = calcFactura(f.lineas, f.retencionPct, f.aplicarRecargo);
+  if ((f.tipoDoc || f.tipo_doc) === "venta_tienda") {
+    const ivaManual = parseFloat(f.impuestoManual ?? f.impuesto_manual ?? 0) || 0;
+    const costeMerc = parseFloat(f.costeMercancia ?? f.coste_mercancia ?? 0) || 0;
+    return {
+      ...t,
+      totalIVA: ivaManual,
+      total: t.totalBase + ivaManual,
+      costeMercancia: costeMerc,
+      beneficioTienda: t.totalBase - costeMerc,
+    };
+  }
+  return t;
+}
+
 // Agrupa líneas por tipo de IVA para el resumen fiscal.
 // Distingue mismo porcentaje con y sin recargo de equivalencia,
 // ya que producen bases fiscales distintas en el libro de IVA.
@@ -157,7 +175,7 @@ function summarizeFacturas(flist) {
   // retencionesRep = IRPF que tú retienes a profesionales en gastos → a ingresar Mod. 111
   let ingresos = 0, gastos = 0, ivaRep = 0, ivaSop = 0, retencionesSop = 0, retencionesRep = 0;
   flist.forEach(f => {
-    const t = calcFactura(f.lineas, f.retencionPct, f.aplicarRecargo);
+    const t = calcFacturaReal(f);
     if (f.tipo === "venta") {
       ingresos += t.totalBase; ivaRep += t.totalIVA;
       retencionesSop += t.totalRetencion; // IRPF soportado (te descuentan en tu factura)
@@ -326,7 +344,7 @@ tbody td:first-child{text-align:left}tbody tr:last-child td{border-bottom:none}t
 `;
 
 function buildFacturaPrintHTML(f, logo) {
-  const t     = calcFactura(f.lineas, f.retencionPct, f.aplicarRecargo);
+  const t     = calcFacturaReal(f);
   const fecha = new Date(f.fecha).toLocaleDateString("es-ES", { day:"2-digit", month:"long", year:"numeric" });
   const isV   = f.tipo === "venta";
   const rows  = (f.lineas || []).map(l => {
@@ -591,11 +609,11 @@ function PeriodSelector({ mode, setMode, value, setValue, year, setYear, factura
 
 function DetalleFacturaModal({ factura, logo, onClose, onEdit, onDelete }) {
   if (!factura) return null;
-  const t   = calcFactura(factura.lineas, factura.retencionPct, factura.aplicarRecargo);
+  const t   = calcFacturaReal(factura);
   const isV = factura.tipo === "venta";
   const esTienda = factura.tipoDoc === "venta_tienda";
-  const ivaReal = esTienda ? (parseFloat(factura.impuestoManual)||0) : t.totalIVA;
-  const totalReal = esTienda ? (t.totalBase + ivaReal) : t.total;
+  const ivaReal = t.totalIVA;
+  const totalReal = t.total;
   const html = buildFacturaPrintHTML(factura, logo);
   const headerColor = esTienda ? "bg-violet-600" : isV ? "bg-emerald-600" : "bg-rose-600";
   return (
@@ -732,11 +750,11 @@ function DetalleFacturaModal({ factura, logo, onClose, onEdit, onDelete }) {
 
 function FacturaCreadaModal({ factura, logo, onEdit, onClose }) {
   if (!factura) return null;
-  const t   = calcFactura(factura.lineas, factura.retencionPct, factura.aplicarRecargo);
+  const t   = calcFacturaReal(factura);
   const isV = factura.tipo === "venta";
   const esTienda = factura.tipoDoc === "venta_tienda";
-  const ivaReal = esTienda ? (parseFloat(factura.impuestoManual)||0) : t.totalIVA;
-  const totalReal = esTienda ? (t.totalBase + ivaReal) : t.total;
+  const ivaReal = t.totalIVA;
+  const totalReal = t.total;
   const html = buildFacturaPrintHTML(factura, logo);
   const headerGrad = esTienda ? "bg-gradient-to-br from-violet-500 to-violet-700" : isV ? "bg-gradient-to-br from-emerald-500 to-emerald-700" : "bg-gradient-to-br from-rose-500 to-rose-700";
   return (
@@ -1376,7 +1394,7 @@ function VistaContactos({ contactos, setContactos, facturas, onView, onSaveConta
               ) : (
                 <div className="space-y-2">
                   {fichaFacturas.map(f => {
-                    const t = calcFactura(f.lineas, f.retencionPct, f.aplicarRecargo);
+                    const t = calcFacturaReal(f);
                     const isV = f.tipo === "venta";
                     return (
                       <div key={f.id} className="flex items-center gap-3 px-4 py-3 rounded-xl border border-gray-100 hover:bg-gray-50 cursor-pointer" onClick={() => { setVerFichaId(null); onView && onView(f); }}>
@@ -1397,7 +1415,7 @@ function VistaContactos({ contactos, setContactos, facturas, onView, onSaveConta
                   {fichaFacturas.length > 0 && (
                     <div className="pt-2 text-right text-xs text-gray-500">
                       Total facturado: <span className="font-black text-gray-800 font-mono">
-                        {fmt(fichaFacturas.reduce((s,f)=>s+calcFactura(f.lineas,f.retencionPct,f.aplicarRecargo).total,0))}
+                        {fmt(fichaFacturas.reduce((s,f)=>s+calcFacturaReal(f).total,0))}
                       </span>
                     </div>
                   )}
@@ -1933,24 +1951,25 @@ function DocumentoRecibidoForm({ actividades, onSave, onCancel, initial, contact
 }
 
 // ════════════════════════════════════════════════════════════
-// AUDITORÍA CONTABLE + VERIFICACIÓN VERIFACTU
+// AUDITORÍA CONTABLE + VERIFICACIÓN VERIFACTU + ASESOR IA
 // ════════════════════════════════════════════════════════════
 
 const NIF_RE = /^[0-9]{8}[A-Z]$|^[A-Z][0-9]{7}[0-9A-Z]$|^[KLMXYZ][0-9]{7}[A-Z]$/i;
 
-function ejecutarAuditoria(facturas) {
+function ejecutarAuditoria(facturas, nominas = []) {
   const alertas = [];
   const emitidas = facturas.filter(f => f.modo === "emitida" || f.tipo === "venta").sort((a,b) => new Date(a.fecha) - new Date(b.fecha));
   const recibidas = facturas.filter(f => f.modo === "recibida" || f.tipo === "gasto");
   const todas = [...facturas].sort((a,b) => new Date(a.fecha) - new Date(b.fecha));
   const hoy = new Date();
+  const anioActual = hoy.getFullYear();
+  const trimestreActual = Math.floor(hoy.getMonth() / 3);
 
   // ── 1. NUMERACIÓN: saltos y duplicados ──
   const numeros = emitidas.map(f => f.numero);
   const dupsNum = numeros.filter((n, i) => numeros.indexOf(n) !== i);
-  if (dupsNum.length > 0) alertas.push({ tipo: "error", cat: "Numeración", msg: `Facturas con número duplicado: ${[...new Set(dupsNum)].join(", ")}`, detalle: "VeriFactu exige numeración correlativa y única. Duplicados invalidan la cadena." });
+  if (dupsNum.length > 0) alertas.push({ tipo: "error", cat: "Numeración", msg: `Facturas con número duplicado: ${[...new Set(dupsNum)].join(", ")}`, detalle: "VeriFactu exige numeración correlativa y única (art. 11 RD 1007/2023). Duplicados invalidan la cadena de hashes.", accion: "Corrige inmediatamente: emite factura rectificativa o reasigna números." });
 
-  // Detectar saltos en numeración secuencial (DC-YYYY/NNNN)
   const dcNums = emitidas.map(f => { const m = f.numero.match(/DC-(\d{4})\/(\d+)/); return m ? { year: parseInt(m[1]), seq: parseInt(m[2]), num: f.numero } : null; }).filter(Boolean);
   const byYear = {};
   dcNums.forEach(n => { if (!byYear[n.year]) byYear[n.year] = []; byYear[n.year].push(n); });
@@ -1958,18 +1977,24 @@ function ejecutarAuditoria(facturas) {
     nums.sort((a,b) => a.seq - b.seq);
     for (let i = 1; i < nums.length; i++) {
       if (nums[i].seq - nums[i-1].seq > 1) {
-        alertas.push({ tipo: "warn", cat: "Numeración", msg: `Salto en numeración ${yr}: de ${nums[i-1].num} a ${nums[i].num} (faltan ${nums[i].seq - nums[i-1].seq - 1})`, detalle: "Hacienda puede interpretar saltos como facturas eliminadas." });
+        alertas.push({ tipo: "warn", cat: "Numeración", msg: `Salto en numeración ${yr}: de ${nums[i-1].num} a ${nums[i].num} (faltan ${nums[i].seq - nums[i-1].seq - 1})`, detalle: "Hacienda puede interpretar saltos como facturas eliminadas (art. 201 bis LGT). Sanción hasta 150 EUR por factura.", accion: "Documenta por escrito la razón del salto. Si fue error, anota en observaciones." });
       }
     }
   });
 
   // ── 2. NIF/CIF: ausentes o mal formados ──
   emitidas.filter(f => f.tipoDoc !== "venta_tienda").forEach(f => {
-    if (!f.nif && !f.clienteNif) alertas.push({ tipo: "warn", cat: "NIF", msg: `Factura ${f.numero} sin NIF/CIF del cliente`, detalle: "Obligatorio en facturas completas (art. 6 RD 1619/2012). En simplificadas (<400 EUR) puede omitirse." });
-    else { const nif = (f.nif || f.clienteNif || "").trim().toUpperCase(); if (nif && !NIF_RE.test(nif.replace(/[-\s]/g,""))) alertas.push({ tipo: "warn", cat: "NIF", msg: `NIF/CIF sospechoso en ${f.numero}: "${nif}"`, detalle: "El formato no coincide con DNI, NIE ni CIF estándar." }); }
+    const t = calcFacturaReal(f);
+    if (!f.nif && !f.clienteNif) {
+      if (t.total > 400) alertas.push({ tipo: "error", cat: "NIF", msg: `Factura ${f.numero} sin NIF del cliente (importe ${fmt(t.total)})`, detalle: "Obligatorio en facturas completas (art. 6 RD 1619/2012). Facturas simplificadas solo permiten omitir NIF si importe < 400 EUR.", accion: "Solicita NIF al cliente y actualiza la factura." });
+      else alertas.push({ tipo: "info", cat: "NIF", msg: `Factura ${f.numero} sin NIF (simplificada: ${fmt(t.total)})`, detalle: "Aceptable en factura simplificada (< 400 EUR) pero recomendable tenerlo.", accion: "Recomendado: solicitar NIF igualmente para el modelo 347." });
+    } else {
+      const nif = (f.nif || f.clienteNif || "").trim().toUpperCase().replace(/[-\s]/g,"");
+      if (nif && !NIF_RE.test(nif)) alertas.push({ tipo: "warn", cat: "NIF", msg: `NIF sospechoso en ${f.numero}: "${f.nif || f.clienteNif}"`, detalle: "No coincide con formato DNI (8 dígitos + letra), NIE (X/Y/Z + 7 dígitos + letra) ni CIF (letra + 8 caracteres).", accion: "Verifica con el cliente. NIF incorrecto invalida la deducción de IVA del receptor." });
+    }
   });
   recibidas.forEach(f => {
-    if (!f.nif && !f.clienteNif) alertas.push({ tipo: "info", cat: "NIF", msg: `Gasto ${f.numero} sin NIF del proveedor`, detalle: "Sin NIF no puedes deducir IVA soportado (art. 97 LIVA)." });
+    if (!f.nif && !f.clienteNif) alertas.push({ tipo: "warn", cat: "NIF", msg: `Gasto ${f.numero} sin NIF del proveedor`, detalle: "Sin NIF no puedes deducir el IVA soportado (art. 97.1 LIVA). La AEAT rechazará la deducción en comprobación.", accion: "Solicita factura completa con NIF al proveedor antes de presentar el 303." });
   });
 
   // ── 3. IVA: cálculos y tipos ──
@@ -1977,72 +2002,110 @@ function ejecutarAuditoria(facturas) {
     if (f.tipoDoc === "venta_tienda") return;
     (f.lineas || []).forEach((l, i) => {
       const tipo = parseInt(l.tipoIVA);
-      if (!l.exento && ![0, 4, 10, 21].includes(tipo)) alertas.push({ tipo: "error", cat: "IVA", msg: `Tipo IVA no estándar (${tipo}%) en ${f.numero}, línea ${i+1}`, detalle: "En España solo existen IVA 0% (exento), 4% (superreducido), 10% (reducido) y 21% (general)." });
-      if (parseFloat(l.precioUnitario) === 0 && parseFloat(l.cantidad) > 0) alertas.push({ tipo: "info", cat: "Importes", msg: `Precio unitario 0 en ${f.numero}, línea ${i+1}: "${l.descripcion}"`, detalle: "Puede ser correcto (muestra gratuita) pero verifica que no sea un error de entrada." });
+      if (!l.exento && ![0, 4, 10, 21].includes(tipo)) alertas.push({ tipo: "error", cat: "IVA", msg: `Tipo IVA no estándar (${tipo}%) en ${f.numero}, línea ${i+1}`, detalle: "En España solo existen IVA 0% (exento), 4% (superreducido), 10% (reducido) y 21% (general). Art. 90-91 LIVA.", accion: "Corrige el tipo de IVA en la línea afectada." });
+      if (parseFloat(l.precioUnitario) === 0 && parseFloat(l.cantidad) > 0) alertas.push({ tipo: "info", cat: "Importes", msg: `Precio 0 en ${f.numero}, línea ${i+1}: "${l.descripcion}"`, detalle: "Puede ser correcto (muestra gratuita, autoconsumo) pero Hacienda vigila operaciones a precio 0.", accion: "Si es autoconsumo, debe tributar a valor de mercado (art. 79.3 LIVA)." });
     });
-    const t = calcFactura(f.lineas, f.retencionPct, f.aplicarRecargo);
-    if (t.totalBase < 0) alertas.push({ tipo: "warn", cat: "Importes", msg: `Base imponible negativa en ${f.numero}: ${fmt(t.totalBase)}`, detalle: "Solo válido en facturas rectificativas. Si no lo es, revisa las cantidades." });
+    const t = calcFacturaReal(f);
+    if (t.totalBase < 0 && !f.esRectificativa) alertas.push({ tipo: "error", cat: "Importes", msg: `Base negativa en ${f.numero} (${fmt(t.totalBase)}) sin ser rectificativa`, detalle: "Solo las facturas rectificativas pueden tener base negativa (art. 15 RD 1619/2012).", accion: "Marca como rectificativa o corrige el importe." });
   });
 
-  // ── 4. FECHAS: futuras, muy antiguas, orden ──
+  // ── 4. RETENCIÓN IRPF ──
+  emitidas.filter(f => f.tipoDoc !== "venta_tienda").forEach(f => {
+    const pct = parseFloat(f.retencionPct || 0);
+    if (pct > 0 && ![7, 15, 1, 2, 19, 20, 24].includes(pct)) {
+      alertas.push({ tipo: "warn", cat: "IRPF", msg: `Retención atípica ${pct}% en ${f.numero}`, detalle: "Tipos habituales: 7% (nuevos autónomos, art. 101.5 LIRPF primeros 3 años), 15% (general profesionales), 19-24% (rentas capital).", accion: "Verifica que el porcentaje sea correcto según tu situación." });
+    }
+  });
+  // Profesionales sin retención
+  recibidas.forEach(f => {
+    const nif = (f.nif || f.clienteNif || "").trim().toUpperCase();
+    const pct = parseFloat(f.retencionPct || 0);
+    if (pct > 0 && !nif) {
+      alertas.push({ tipo: "warn", cat: "IRPF", msg: `Gasto ${f.numero} con retención ${pct}% pero sin NIF`, detalle: "Si retienes IRPF a un profesional, necesitas su NIF para el modelo 111 y 190.", accion: "Solicita NIF del profesional e inclúyelo en la factura." });
+    }
+  });
+
+  // ── 5. FECHAS ──
   todas.forEach(f => {
     const fd = new Date(f.fecha);
-    if (fd > hoy) alertas.push({ tipo: "warn", cat: "Fechas", msg: `Factura ${f.numero} con fecha futura: ${fd.toLocaleDateString("es-ES")}`, detalle: "Las facturas deben emitirse en la fecha de la operación o antes del día 16 del mes siguiente." });
+    if (fd > hoy) alertas.push({ tipo: "warn", cat: "Fechas", msg: `${f.numero} con fecha futura: ${fd.toLocaleDateString("es-ES")}`, detalle: "Las facturas se emiten en la fecha de la operación o antes del día 16 del mes siguiente (art. 11 RD 1619/2012).", accion: "Corrige la fecha si es un error." });
     const diasAnti = Math.floor((hoy - fd) / 86400000);
-    if (diasAnti > 1825) alertas.push({ tipo: "info", cat: "Fechas", msg: `Factura ${f.numero} tiene más de 5 años (${fd.toLocaleDateString("es-ES")})`, detalle: "Si ha prescrito (4 años), ya no tiene efecto fiscal pero conserva para auditorías." });
+    if (diasAnti > 1460 && diasAnti <= 1825) alertas.push({ tipo: "info", cat: "Fechas", msg: `${f.numero} próxima a prescribir (${Math.floor(diasAnti/365)} años)`, detalle: "El plazo de prescripción tributaria es 4 años (art. 66 LGT). Después no puede ser inspeccionada, pero conserva 6 años por obligación mercantil.", accion: "Conserva documentación. Prescribe fiscalmente en " + Math.ceil((1461-diasAnti)/30) + " meses." });
   });
 
-  // ── 5. DUPLICADOS SOSPECHOSOS ──
+  // ── 6. DUPLICADOS ──
   const firmas = {};
   todas.forEach(f => {
-    const t = calcFactura(f.lineas, f.retencionPct, f.aplicarRecargo);
+    const t = calcFacturaReal(f);
     const key = `${f.fecha}_${t.total.toFixed(2)}_${(f.cliente||"").toLowerCase().trim()}`;
     if (!firmas[key]) firmas[key] = [];
     firmas[key].push(f.numero);
   });
   Object.entries(firmas).filter(([,v]) => v.length > 1).forEach(([k, nums]) => {
-    alertas.push({ tipo: "warn", cat: "Duplicados", msg: `Posible duplicado: ${nums.join(" y ")} (misma fecha, importe y cliente)`, detalle: "Verifica que no sean facturas duplicadas por error." });
+    alertas.push({ tipo: "warn", cat: "Duplicados", msg: `Posible duplicado: ${nums.join(" y ")} (misma fecha, importe y cliente)`, detalle: "Duplicar gastos es la irregularidad más frecuente en inspecciones a autónomos.", accion: "Revisa si son operaciones distintas. Si es duplicado, elimina la errónea." });
   });
 
-  // ── 6. SALDOS PENDIENTES ANTIGUOS ──
+  // ── 7. SALDOS PENDIENTES ──
   todas.forEach(f => {
     const isV = f.tipo === "venta";
     const pendiente = isV ? !f.cobrado : !f.pagado;
     if (pendiente) {
       const dias = Math.floor((hoy - new Date(f.fecha)) / 86400000);
-      if (dias > 90) alertas.push({ tipo: "warn", cat: "Saldos", msg: `${f.numero}: ${isV ? "sin cobrar" : "sin pagar"} desde hace ${dias} días`, detalle: isV ? "Facturas impagadas >90 días: valora provisión por insolvencia (art. 13.1 LIS)." : "Gastos pendientes de pago prolongados pueden generar problemas de tesorería." });
+      if (dias > 180) alertas.push({ tipo: "error", cat: "Saldos", msg: `${f.numero}: ${isV ? "sin cobrar" : "sin pagar"} desde hace ${dias} días`, detalle: isV ? "Facturas impagadas >6 meses: obligatorio provisionar por insolvencia (art. 13.1 LIS). Además, puedes solicitar modificación de base imponible del IVA (art. 80.4 LIVA)." : "Gastos pendientes de pago >6 meses generan problemas de tesorería graves.", accion: isV ? "Inicia reclamación o provisiona. Valora modificar base IVA para recuperar cuota." : "Gestiona el pago para evitar recargos del proveedor." });
+      else if (dias > 60) alertas.push({ tipo: "warn", cat: "Saldos", msg: `${f.numero}: ${isV ? "sin cobrar" : "sin pagar"} desde hace ${dias} días`, detalle: isV ? "Contacta al cliente. Pasados 6 meses tienes opciones legales adicionales." : "Vigila la liquidez.", accion: isV ? "Envía recordatorio de pago al cliente." : "Programa el pago." });
     }
   });
 
-  // ── 7. CADENA VERIFACTU ──
+  // ── 8. CADENA VERIFACTU ──
   const conHash = emitidas.filter(f => f.verifactuHash).sort((a,b) => (a.verifactuCadenaPos||0) - (b.verifactuCadenaPos||0));
   const sinHash = emitidas.filter(f => !f.verifactuHash && f.tipoDoc !== "venta_tienda");
-  if (sinHash.length > 0 && conHash.length > 0) alertas.push({ tipo: "warn", cat: "VeriFactu", msg: `${sinHash.length} factura(s) emitida(s) sin hash VeriFactu`, detalle: "Facturas anteriores a la activación del sistema. Considera regenerar la cadena." });
+  if (sinHash.length > 0 && conHash.length > 0) alertas.push({ tipo: "warn", cat: "VeriFactu", msg: `${sinHash.length} factura(s) emitida(s) sin hash VeriFactu`, detalle: "Facturas anteriores a la activación. La cadena empieza desde que se activó el sistema.", accion: "Las facturas antiguas no se pueden encadenar retroactivamente. Solo las nuevas tendrán hash." });
   for (let i = 1; i < conHash.length; i++) {
-    if ((conHash[i].verifactuCadenaPos||0) - (conHash[i-1].verifactuCadenaPos||0) !== 1) {
-      alertas.push({ tipo: "error", cat: "VeriFactu", msg: `Salto en cadena VeriFactu: pos ${conHash[i-1].verifactuCadenaPos} → ${conHash[i].verifactuCadenaPos}`, detalle: "La cadena de hashes debe ser consecutiva. Esto indica una posible manipulación o error." });
-    }
-    if (conHash[i].verifactuHashPrevio && conHash[i].verifactuHashPrevio !== conHash[i-1].verifactuHash) {
-      alertas.push({ tipo: "error", cat: "VeriFactu", msg: `Rotura de cadena en ${conHash[i].numero}: hash previo no coincide`, detalle: "GRAVE: el hash previo almacenado no coincide con el hash de la factura anterior. La integridad de la cadena está comprometida." });
+    if ((conHash[i].verifactuCadenaPos||0) - (conHash[i-1].verifactuCadenaPos||0) !== 1)
+      alertas.push({ tipo: "error", cat: "VeriFactu", msg: `Salto en cadena: pos ${conHash[i-1].verifactuCadenaPos} a ${conHash[i].verifactuCadenaPos}`, detalle: "GRAVE: La cadena debe ser consecutiva. Posible manipulación o error.", accion: "Investiga qué ocurrió. Puede requerir reconstrucción de cadena." });
+    if (conHash[i].verifactuHashPrevio && conHash[i].verifactuHashPrevio !== conHash[i-1].verifactuHash)
+      alertas.push({ tipo: "error", cat: "VeriFactu", msg: `Rotura de cadena en ${conHash[i].numero}`, detalle: "GRAVE: el hash previo no coincide. La integridad está comprometida.", accion: "Esto puede indicar manipulación de datos. Contacta soporte técnico." });
+  }
+
+  // ── 9. ACTIVIDADES ──
+  todas.filter(f => !f.actividad || f.actividad === "Sin actividad").forEach(f => {
+    alertas.push({ tipo: "info", cat: "Actividades", msg: `${f.numero} sin actividad`, detalle: "Necesario para desglose en modelos 130 y 303 si tienes varias actividades.", accion: "Asigna la actividad correspondiente." });
+  });
+
+  // ── 10. VENTAS DE TIENDA ──
+  const ventasTienda = emitidas.filter(f => f.tipoDoc === "venta_tienda");
+  ventasTienda.forEach(f => {
+    const t = calcFacturaReal(f);
+    if (t.totalIVA === 0 && t.totalBase > 0) alertas.push({ tipo: "warn", cat: "IVA Tienda", msg: `Venta tienda ${f.numero} sin impuesto registrado`, detalle: "Aunque sea un resumen mensual, el IVA repercutido debe reflejarse para el modelo 303.", accion: "Edita la venta y añade el impuesto general del período." });
+    if ((t.costeMercancia || 0) <= 0 && t.totalBase > 0) alertas.push({ tipo: "info", cat: "Tienda", msg: `Venta ${f.numero} sin coste de mercancía`, detalle: "Sin coste no se calcula el margen real del negocio.", accion: "Registra el coste de la mercancía vendida para tener un margen de beneficio realista." });
+  });
+
+  // ── 11. TRIMESTRE ACTUAL: prepago fiscal ──
+  const factsTrimestreActual = facturas.filter(f => {
+    const d = new Date(f.fecha);
+    return d.getFullYear() === anioActual && Math.floor(d.getMonth()/3) === trimestreActual;
+  });
+  const resQ = summarizeFacturas(factsTrimestreActual);
+  const ivaAPagar = resQ.ivaRep - resQ.ivaSop;
+  if (ivaAPagar > 0 && resQ.ingresos > 0) {
+    alertas.push({ tipo: "info", cat: "Previsión fiscal", msg: `IVA estimado trimestre actual: ${fmt(ivaAPagar)} a pagar`, detalle: `Ingresos: ${fmt(resQ.ingresos)}, IVA rep.: ${fmt(resQ.ivaRep)}, IVA sop.: ${fmt(resQ.ivaSop)}.`, accion: "Reserva esta cantidad para el modelo 303." });
+  }
+  const rendNeto = Math.max(0, resQ.beneficio);
+  const irpfEst = rendNeto * 0.20 - resQ.retencionesSop;
+  if (irpfEst > 0) {
+    alertas.push({ tipo: "info", cat: "Previsión fiscal", msg: `IRPF (Mod. 130) estimado: ${fmt(irpfEst)}`, detalle: `Rendimiento neto: ${fmt(rendNeto)}, 20% = ${fmt(rendNeto*0.20)}, retenciones soportadas: -${fmt(resQ.retencionesSop)}.`, accion: "Reserva para el pago fraccionado." });
+  }
+
+  // ── 12. NÓMINAS ──
+  if (nominas.length > 0) {
+    const nominasMesActual = nominas.filter(n => n.mes === hoy.getMonth() && n.anio === anioActual);
+    const trabajadoresActivos = [...new Set(nominas.map(n => n.trabajadorNombre))];
+    if (nominasMesActual.length === 0 && trabajadoresActivos.length > 0) {
+      alertas.push({ tipo: "warn", cat: "Nóminas", msg: `No hay nóminas registradas para ${MONTHS[hoy.getMonth()]} ${anioActual}`, detalle: "Si tienes trabajadores activos, las nóminas deben estar al día.", accion: "Genera las nóminas del mes actual." });
     }
   }
 
-  // ── 8. ACTIVIDADES SIN ASIGNAR ──
-  todas.filter(f => !f.actividad || f.actividad === "Sin actividad").forEach(f => {
-    alertas.push({ tipo: "info", cat: "Actividades", msg: `${f.numero} sin actividad asignada`, detalle: "Necesario para el desglose por actividad en modelos trimestrales." });
-  });
-
-  // ── 9. RETENCIÓN IRPF ──
-  emitidas.filter(f => f.tipoDoc !== "venta_tienda").forEach(f => {
-    if ((f.retencionPct || 0) > 0) {
-      const pct = parseFloat(f.retencionPct);
-      if (![7, 15].includes(pct) && pct !== 1 && pct !== 2 && pct !== 19 && pct !== 20) {
-        alertas.push({ tipo: "warn", cat: "IRPF", msg: `Retención atípica ${pct}% en ${f.numero}`, detalle: "Tipos habituales: 7% (nuevos autónomos primeros 3 años), 15% (general). Verifica si es correcto." });
-      }
-    }
-  });
-
-  // ── 10. RESUMEN ──
+  // ── PUNTUACIÓN ──
   const errores = alertas.filter(a => a.tipo === "error").length;
   const avisos = alertas.filter(a => a.tipo === "warn").length;
   const info = alertas.filter(a => a.tipo === "info").length;
@@ -2050,116 +2113,370 @@ function ejecutarAuditoria(facturas) {
   nota -= errores * 2;
   nota -= avisos * 0.5;
   nota -= info * 0.1;
-  nota = Math.max(0, Math.min(10, nota));
+  nota = Math.max(0, Math.min(10, Math.round(nota * 10) / 10));
 
-  return { alertas, errores, avisos, info, nota: Math.round(nota * 10) / 10, totalFacturas: todas.length, totalEmitidas: emitidas.length, totalRecibidas: recibidas.length, conHash: conHash.length, sinHash: sinHash.length };
+  return { alertas, errores, avisos, info, nota, totalFacturas: todas.length, totalEmitidas: emitidas.length, totalRecibidas: recibidas.length, conHash: conHash.length, sinHash: sinHash.length, resumenTrimestre: { ivaAPagar, irpfEst, ingresos: resQ.ingresos, gastos: resQ.gastos, beneficio: resQ.beneficio } };
 }
 
-function VistaAuditoria({ facturas }) {
+function generarResumenParaIA(facturas, nominas = []) {
+  const hoy = new Date();
+  const anio = hoy.getFullYear();
+  const mes = hoy.getMonth();
+  const trimestre = Math.floor(mes / 3);
+  const trimestreNombre = ["1T","2T","3T","4T"][trimestre];
+
+  // Datos anuales
+  const factsAnio = facturas.filter(f => new Date(f.fecha).getFullYear() === anio);
+  const resAnio = summarizeFacturas(factsAnio);
+
+  // Datos trimestrales
+  const factsTrim = facturas.filter(f => { const d = new Date(f.fecha); return d.getFullYear() === anio && Math.floor(d.getMonth()/3) === trimestre; });
+  const resTrim = summarizeFacturas(factsTrim);
+
+  // Datos mensuales (últimos 3 meses)
+  const meses3 = [];
+  for (let i = 2; i >= 0; i--) {
+    const m = new Date(anio, mes - i, 1);
+    const mf = facturas.filter(f => { const d = new Date(f.fecha); return d.getMonth() === m.getMonth() && d.getFullYear() === m.getFullYear(); });
+    const r = summarizeFacturas(mf);
+    meses3.push({ mes: MONTHS[m.getMonth()], anio: m.getFullYear(), ingresos: r.ingresos, gastos: r.gastos, ivaRep: r.ivaRep, ivaSop: r.ivaSop, beneficio: r.beneficio, nFacturas: mf.length });
+  }
+
+  // Saldos pendientes
+  const pendCobro = facturas.filter(f => f.tipo === "venta" && !f.cobrado);
+  const pendPago = facturas.filter(f => f.tipo === "gasto" && !f.pagado);
+  const totalPendCobro = pendCobro.reduce((s,f) => s + calcFacturaReal(f).total, 0);
+  const totalPendPago = pendPago.reduce((s,f) => s + calcFacturaReal(f).total, 0);
+
+  // Por actividad
+  const porAct = {};
+  factsAnio.forEach(f => {
+    const act = f.actividad || "Sin actividad";
+    if (!porAct[act]) porAct[act] = { ingresos: 0, gastos: 0, n: 0 };
+    const t = calcFacturaReal(f);
+    if (f.tipo === "venta") porAct[act].ingresos += t.totalBase;
+    else porAct[act].gastos += t.totalBase;
+    porAct[act].n++;
+  });
+
+  // Top clientes y proveedores
+  const clientes = {}, proveedores = {};
+  factsAnio.forEach(f => {
+    const nombre = f.cliente || "Desconocido";
+    const t = calcFacturaReal(f);
+    if (f.tipo === "venta") { if (!clientes[nombre]) clientes[nombre] = 0; clientes[nombre] += t.totalBase; }
+    else { if (!proveedores[nombre]) proveedores[nombre] = 0; proveedores[nombre] += t.totalBase; }
+  });
+  const topClientes = Object.entries(clientes).sort((a,b) => b[1]-a[1]).slice(0,5);
+  const topProveedores = Object.entries(proveedores).sort((a,b) => b[1]-a[1]).slice(0,5);
+
+  // Nóminas
+  const nominasInfo = nominas.length > 0 ? {
+    total: nominas.length,
+    costeMensual: nominas.filter(n => n.mes === mes && n.anio === anio).reduce((s,n) => s + calcNomina(n).costeEmpresa, 0),
+    trabajadores: [...new Set(nominas.map(n => n.trabajadorNombre))].length
+  } : null;
+
+  // VeriFactu
+  const conHash = facturas.filter(f => f.verifactuHash).length;
+  const totalEmitidas = facturas.filter(f => f.tipo === "venta").length;
+
+  const fmtN = n => n.toFixed(2);
+
+  return `DATOS CONTABLES DEL AUTÓNOMO - FECHA: ${hoy.toLocaleDateString("es-ES")}
+
+RESUMEN ANUAL ${anio}:
+- Ingresos totales (base): ${fmtN(resAnio.ingresos)} EUR
+- Gastos totales (base): ${fmtN(resAnio.gastos)} EUR
+- Beneficio bruto: ${fmtN(resAnio.beneficio)} EUR
+- IVA repercutido acumulado: ${fmtN(resAnio.ivaRep)} EUR
+- IVA soportado acumulado: ${fmtN(resAnio.ivaSop)} EUR
+- Retenciones IRPF soportadas: ${fmtN(resAnio.retencionesSop)} EUR
+- Total facturas emitidas: ${factsAnio.filter(f=>f.tipo==="venta").length}
+- Total facturas recibidas: ${factsAnio.filter(f=>f.tipo==="gasto").length}
+
+TRIMESTRE ACTUAL (${trimestreNombre} ${anio}):
+- Ingresos: ${fmtN(resTrim.ingresos)} EUR
+- Gastos: ${fmtN(resTrim.gastos)} EUR
+- IVA a pagar estimado (Mod. 303): ${fmtN(resTrim.ivaRep - resTrim.ivaSop)} EUR
+- IRPF estimado (Mod. 130): ${fmtN(Math.max(0, resTrim.beneficio * 0.20 - resTrim.retencionesSop))} EUR
+
+EVOLUCIÓN ÚLTIMOS 3 MESES:
+${meses3.map(m => `${m.mes} ${m.anio}: Ingresos ${fmtN(m.ingresos)}, Gastos ${fmtN(m.gastos)}, Beneficio ${fmtN(m.beneficio)}, Facturas: ${m.nFacturas}`).join("\n")}
+
+SALDOS PENDIENTES:
+- Facturas por cobrar: ${pendCobro.length} (${fmtN(totalPendCobro)} EUR)
+- Facturas por pagar: ${pendPago.length} (${fmtN(totalPendPago)} EUR)
+- Saldo neto pendiente: ${fmtN(totalPendCobro - totalPendPago)} EUR
+${pendCobro.filter(f => Math.floor((hoy - new Date(f.fecha))/86400000) > 60).length > 0 ? `- ALERTA: ${pendCobro.filter(f => Math.floor((hoy - new Date(f.fecha))/86400000) > 60).length} facturas por cobrar con más de 60 días` : ""}
+
+DESGLOSE POR ACTIVIDAD:
+${Object.entries(porAct).map(([act, d]) => `${act}: Ingresos ${fmtN(d.ingresos)}, Gastos ${fmtN(d.gastos)}, Margen ${d.ingresos > 0 ? ((d.ingresos-d.gastos)/d.ingresos*100).toFixed(1) : 0}%, Facturas: ${d.n}`).join("\n")}
+
+TOP CLIENTES: ${topClientes.map(([n,v]) => `${n} (${fmtN(v)} EUR)`).join(", ") || "Sin datos"}
+TOP PROVEEDORES: ${topProveedores.map(([n,v]) => `${n} (${fmtN(v)} EUR)`).join(", ") || "Sin datos"}
+
+${nominasInfo ? `NÓMINAS: ${nominasInfo.trabajadores} trabajador(es), coste empresa mes actual: ${fmtN(nominasInfo.costeMensual)} EUR` : "Sin trabajadores registrados."}
+
+VERIFACTU: ${conHash} de ${totalEmitidas} facturas emitidas con hash SHA-256.
+RATIO GASTOS/INGRESOS: ${resAnio.ingresos > 0 ? (resAnio.gastos/resAnio.ingresos*100).toFixed(1) : "N/A"}%
+MARGEN NETO: ${resAnio.ingresos > 0 ? ((resAnio.beneficio)/resAnio.ingresos*100).toFixed(1) : "N/A"}%`;
+}
+
+function VistaAuditoria({ facturas, nominas = [] }) {
+  const [tab, setTab] = useState("chequeo");
   const [resultado, setResultado] = useState(null);
   const [filtro, setFiltro] = useState("todos");
+  // IA
+  const [iaLoading, setIaLoading] = useState(false);
+  const [iaResultado, setIaResultado] = useState(null);
+  const [iaError, setIaError] = useState(null);
 
-  const ejecutar = () => { setResultado(ejecutarAuditoria(facturas)); };
-
+  const ejecutar = () => { setResultado(ejecutarAuditoria(facturas, nominas)); };
   useEffect(() => { if (facturas.length > 0) ejecutar(); }, []);
 
-  if (!resultado) return (
-    <div className="text-center py-20">
-      <div className="text-5xl mb-4">🛡️</div>
-      <h2 className="text-xl font-black text-gray-800 mb-2">Auditoría contable y VeriFactu</h2>
-      <p className="text-sm text-gray-500 mb-6 max-w-md mx-auto">Analiza tus facturas buscando errores de numeración, NIF, IVA, duplicados, integridad de la cadena VeriFactu y más.</p>
-      <button onClick={ejecutar} className="bg-slate-900 text-white px-8 py-3 rounded-xl font-black text-sm hover:bg-slate-700">Ejecutar auditoría</button>
-    </div>
-  );
+  const lanzarIA = async () => {
+    setIaLoading(true); setIaError(null); setIaResultado(null);
+    const resumen = generarResumenParaIA(facturas, nominas);
+    const auditoria = resultado || ejecutarAuditoria(facturas, nominas);
+    const alertasTexto = auditoria.alertas.map(a => `[${a.tipo.toUpperCase()}] ${a.cat}: ${a.msg} - ${a.detalle}`).join("\n");
+
+    const prompt = `Eres un asesor fiscal colegiado especializado en autónomos españoles (régimen de estimación directa simplificada). Tu cliente te ha dado acceso a su sistema contable y necesita tu análisis profesional y recomendaciones concretas.
+
+${resumen}
+
+ALERTAS DEL SISTEMA DE AUDITORÍA AUTOMÁTICA:
+${alertasTexto || "Sin alertas."}
+Nota automática: ${auditoria.nota}/10
+
+Tu misión: analiza estos datos como si estuvieras preparando una reunión trimestral con tu cliente. Sé directo, práctico y honesto. No uses lenguaje de marketing, ni eufemismos. Si hay problemas, dílos claramente. Si las cosas van bien, dilo también sin exagerar.
+
+Responde con este formato exacto (usa # para secciones):
+
+# Diagnóstico rápido
+En 3-4 frases, la situación real del negocio. ¿Va bien? ¿Hay riesgos? ¿Qué tendencia ves? Sé concreto con números.
+
+# Salud fiscal
+Analiza la situación ante Hacienda: ¿están los impuestos al día? ¿El ratio gastos/ingresos es razonable o levantará sospechas en inspección? ¿Los modelos trimestrales cuadrarán? Si hay ventas de tienda, ¿el IVA está bien reflejado? Cita artículos de ley cuando sea relevante.
+
+# Análisis de rentabilidad
+¿Qué actividades son rentables y cuáles no? ¿El margen es sostenible? ¿Los gastos están controlados? ¿Hay dependencia excesiva de un solo cliente? Usa los datos reales.
+
+# Tesorería y cobros
+¿La liquidez es suficiente para afrontar los pagos fiscales del trimestre? ¿Los pendientes de cobro son preocupantes? ¿Hay que reclamar algo?
+
+# Problemas detectados
+Lista los problemas reales que has encontrado, ordenados por gravedad. Para cada uno: qué es, por qué importa y qué hacer. No repitas las alertas automáticas, aporta tu criterio profesional sobre ellas.
+
+# Plan de acción (próximos 30 días)
+5-8 acciones concretas, priorizadas, con plazo orientativo. Cada una debe ser algo que el autónomo pueda hacer realmente, no consejos genéricos. Si hay que contratar un gestor para algo, dilo.
+
+# Preparación VeriFactu
+Estado actual de preparación. Qué falta para cumplir antes de julio 2027. Si el sistema ya cubre lo básico (hash chain, QR, inmutabilidad), indícalo y señala lo que aún requiere software certificado.
+
+Escribe en español de España, tono profesional pero cercano. Tutea al cliente. Máximo 1500 palabras.`;
+
+    try {
+      const resp = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 3000, messages: [{ role: "user", content: prompt }] })
+      });
+      if (!resp.ok) throw new Error(`Error API ${resp.status}: ${await resp.text()}`);
+      const data = await resp.json();
+      const txt = (data.content || []).filter(b => b.type === "text").map(b => b.text).join("\n");
+      setIaResultado(txt);
+    } catch (err) {
+      setIaError(err.message || "Error desconocido.");
+    }
+    setIaLoading(false);
+  };
 
   const r = resultado;
-  const notaColor = r.nota >= 8 ? "text-emerald-600" : r.nota >= 5 ? "text-amber-600" : "text-rose-600";
-  const notaBg = r.nota >= 8 ? "from-emerald-50 to-emerald-100 border-emerald-200" : r.nota >= 5 ? "from-amber-50 to-amber-100 border-amber-200" : "from-rose-50 to-rose-100 border-rose-200";
-  const filtradas = filtro === "todos" ? r.alertas : r.alertas.filter(a => a.tipo === filtro);
-  const cats = [...new Set(r.alertas.map(a => a.cat))];
+  const notaColor = r ? (r.nota >= 8 ? "text-emerald-600" : r.nota >= 5 ? "text-amber-600" : "text-rose-600") : "text-gray-400";
+  const notaBg = r ? (r.nota >= 8 ? "from-emerald-50 to-emerald-100 border-emerald-200" : r.nota >= 5 ? "from-amber-50 to-amber-100 border-amber-200" : "from-rose-50 to-rose-100 border-rose-200") : "from-gray-50 to-gray-100 border-gray-200";
+
+  // Renderizar markdown básico
+  const renderMD = (txt) => {
+    if (!txt) return null;
+    return txt.split("\n").map((line, i) => {
+      if (line.startsWith("# ")) return <h2 key={i} className="text-lg font-black text-slate-900 mt-6 mb-2 first:mt-0">{line.slice(2)}</h2>;
+      if (line.startsWith("## ")) return <h3 key={i} className="text-base font-bold text-slate-800 mt-4 mb-1">{line.slice(3)}</h3>;
+      if (line.startsWith("- ")) return <div key={i} className="flex gap-2 ml-2 mb-1"><span className="text-slate-400 mt-0.5">-</span><span className="text-sm text-slate-700">{line.slice(2)}</span></div>;
+      if (line.trim() === "") return <div key={i} className="h-2"/>;
+      return <p key={i} className="text-sm text-slate-700 leading-relaxed mb-1.5">{line}</p>;
+    });
+  };
 
   return (
     <div className="space-y-6">
-      {/* Cabecera con nota */}
+      {/* Cabecera */}
       <div className={`bg-gradient-to-br ${notaBg} border rounded-2xl p-6`}>
         <div className="flex items-center justify-between flex-wrap gap-4">
           <div>
-            <h2 className="text-xl font-black text-gray-900 mb-1">Resultado de auditoría</h2>
-            <p className="text-xs text-gray-500">{r.totalFacturas} facturas analizadas ({r.totalEmitidas} emitidas, {r.totalRecibidas} recibidas)</p>
+            <h2 className="text-xl font-black text-gray-900 mb-1">Auditoría contable y fiscal</h2>
+            <p className="text-xs text-gray-500">{r ? `${r.totalFacturas} facturas analizadas (${r.totalEmitidas} emitidas, ${r.totalRecibidas} recibidas)` : "Cargando..."}</p>
           </div>
           <div className="text-center">
-            <div className={`text-5xl font-black font-mono ${notaColor}`}>{r.nota}</div>
+            <div className={`text-5xl font-black font-mono ${notaColor}`}>{r ? r.nota : "-"}</div>
             <div className="text-xs font-bold text-gray-500">/10</div>
           </div>
         </div>
-        <div className="grid grid-cols-4 gap-3 mt-4">
-          {[
-            { label: "Errores críticos", v: r.errores, color: "bg-rose-600", text: "text-rose-700" },
-            { label: "Avisos", v: r.avisos, color: "bg-amber-500", text: "text-amber-700" },
-            { label: "Informativo", v: r.info, color: "bg-sky-500", text: "text-sky-700" },
-            { label: "Cadena VeriFactu", v: `${r.conHash}/${r.totalEmitidas}`, color: "bg-emerald-600", text: "text-emerald-700" },
-          ].map(item => (
-            <div key={item.label} className="bg-white bg-opacity-70 rounded-xl p-3 text-center">
-              <div className={`text-2xl font-black font-mono ${item.text}`}>{item.v}</div>
-              <div className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">{item.label}</div>
-            </div>
-          ))}
-        </div>
+        {r && (
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mt-4">
+            {[
+              { label: "Errores", v: r.errores, text: "text-rose-700" },
+              { label: "Avisos", v: r.avisos, text: "text-amber-700" },
+              { label: "Info", v: r.info, text: "text-sky-700" },
+              { label: "VeriFactu", v: `${r.conHash}/${r.totalEmitidas}`, text: "text-emerald-700" },
+              { label: "IVA trim.", v: fmt(r.resumenTrimestre.ivaAPagar), text: r.resumenTrimestre.ivaAPagar > 0 ? "text-rose-700" : "text-emerald-700" },
+            ].map(item => (
+              <div key={item.label} className="bg-white bg-opacity-70 rounded-xl p-3 text-center">
+                <div className={`text-xl font-black font-mono ${item.text}`}>{item.v}</div>
+                <div className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">{item.label}</div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
-      {/* Filtros */}
-      <div className="flex gap-2 flex-wrap">
+      {/* Tabs */}
+      <div className="flex gap-1 bg-slate-100 p-1 rounded-xl">
         {[
-          { id: "todos", label: `Todos (${r.alertas.length})` },
-          { id: "error", label: `Errores (${r.errores})`, color: "bg-rose-100 text-rose-700 border-rose-300" },
-          { id: "warn", label: `Avisos (${r.avisos})`, color: "bg-amber-100 text-amber-700 border-amber-300" },
-          { id: "info", label: `Info (${r.info})`, color: "bg-sky-100 text-sky-700 border-sky-300" },
-        ].map(f => (
-          <button key={f.id} onClick={() => setFiltro(f.id)}
-            className={`px-3 py-1.5 text-xs font-bold rounded-lg border transition-all ${filtro === f.id ? (f.color || "bg-slate-900 text-white border-slate-900") : "bg-white text-gray-600 border-gray-200 hover:border-gray-400"}`}>
-            {f.label}
+          { id: "chequeo", label: "Chequeo automático" },
+          { id: "ia", label: "Asesor IA" },
+        ].map(t => (
+          <button key={t.id} onClick={() => setTab(t.id)}
+            className={`flex-1 py-2.5 text-sm font-bold rounded-lg transition-all ${tab === t.id ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}>
+            {t.label}
           </button>
         ))}
-        <div className="flex-1"/>
-        <button onClick={ejecutar} className="px-3 py-1.5 text-xs font-bold rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200">Volver a analizar</button>
       </div>
 
-      {/* Lista de alertas por categoría */}
-      {filtradas.length === 0 ? (
-        <div className="text-center py-12 bg-white border border-gray-100 rounded-2xl">
-          <div className="text-4xl mb-2">✅</div>
-          <div className="text-sm font-semibold text-gray-500">Sin alertas en esta categoría</div>
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {cats.filter(c => filtradas.some(a => a.cat === c)).map(cat => (
-            <div key={cat} className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-              <div className="px-4 py-2.5 bg-gray-50 border-b border-gray-200">
-                <span className="text-xs font-black text-gray-600 uppercase tracking-wider">{cat}</span>
-                <span className="text-xs text-gray-400 ml-2">({filtradas.filter(a => a.cat === cat).length})</span>
+      {/* TAB: Chequeo automático */}
+      {tab === "chequeo" && r && (() => {
+        const filtradas = filtro === "todos" ? r.alertas : r.alertas.filter(a => a.tipo === filtro);
+        const cats = [...new Set(r.alertas.map(a => a.cat))];
+        return (
+          <div className="space-y-4">
+            <div className="flex gap-2 flex-wrap">
+              {[
+                { id: "todos", label: `Todos (${r.alertas.length})` },
+                { id: "error", label: `Errores (${r.errores})`, color: "bg-rose-100 text-rose-700 border-rose-300" },
+                { id: "warn", label: `Avisos (${r.avisos})`, color: "bg-amber-100 text-amber-700 border-amber-300" },
+                { id: "info", label: `Info (${r.info})`, color: "bg-sky-100 text-sky-700 border-sky-300" },
+              ].map(f => (
+                <button key={f.id} onClick={() => setFiltro(f.id)}
+                  className={`px-3 py-1.5 text-xs font-bold rounded-lg border transition-all ${filtro === f.id ? (f.color || "bg-slate-900 text-white border-slate-900") : "bg-white text-gray-600 border-gray-200 hover:border-gray-400"}`}>
+                  {f.label}
+                </button>
+              ))}
+              <div className="flex-1"/>
+              <button onClick={ejecutar} className="px-3 py-1.5 text-xs font-bold rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200">Analizar de nuevo</button>
+            </div>
+            {filtradas.length === 0 ? (
+              <div className="text-center py-12 bg-white border border-gray-100 rounded-2xl">
+                <div className="text-4xl mb-2">✅</div>
+                <div className="text-sm font-semibold text-gray-500">Sin alertas en esta categoría</div>
               </div>
-              <div className="divide-y divide-gray-100">
-                {filtradas.filter(a => a.cat === cat).map((a, i) => (
-                  <div key={i} className="px-4 py-3 flex gap-3 items-start">
-                    <div className={`w-2 h-2 rounded-full mt-1.5 flex-shrink-0 ${a.tipo === "error" ? "bg-rose-500" : a.tipo === "warn" ? "bg-amber-500" : "bg-sky-400"}`}/>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-semibold text-gray-800">{a.msg}</div>
-                      <div className="text-xs text-gray-500 mt-0.5">{a.detalle}</div>
+            ) : (
+              <div className="space-y-3">
+                {cats.filter(c => filtradas.some(a => a.cat === c)).map(cat => (
+                  <div key={cat} className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+                    <div className="px-4 py-2.5 bg-gray-50 border-b border-gray-200 flex items-center gap-2">
+                      <span className="text-xs font-black text-gray-600 uppercase tracking-wider">{cat}</span>
+                      <span className="text-xs text-gray-400">({filtradas.filter(a => a.cat === cat).length})</span>
                     </div>
-                    <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-md flex-shrink-0 ${a.tipo === "error" ? "bg-rose-100 text-rose-700" : a.tipo === "warn" ? "bg-amber-100 text-amber-700" : "bg-sky-100 text-sky-700"}`}>
-                      {a.tipo === "error" ? "CRÍTICO" : a.tipo === "warn" ? "AVISO" : "INFO"}
-                    </span>
+                    <div className="divide-y divide-gray-100">
+                      {filtradas.filter(a => a.cat === cat).map((a, i) => (
+                        <div key={i} className="px-4 py-3 flex gap-3 items-start">
+                          <div className={`w-2 h-2 rounded-full mt-1.5 flex-shrink-0 ${a.tipo === "error" ? "bg-rose-500" : a.tipo === "warn" ? "bg-amber-500" : "bg-sky-400"}`}/>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-sm font-semibold text-gray-800">{a.msg}</div>
+                            <div className="text-xs text-gray-500 mt-0.5">{a.detalle}</div>
+                            {a.accion && <div className="text-xs text-indigo-700 mt-1 bg-indigo-50 px-2 py-1 rounded-md inline-block">{a.accion}</div>}
+                          </div>
+                          <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-md flex-shrink-0 ${a.tipo === "error" ? "bg-rose-100 text-rose-700" : a.tipo === "warn" ? "bg-amber-100 text-amber-700" : "bg-sky-100 text-sky-700"}`}>
+                            {a.tipo === "error" ? "CRÍTICO" : a.tipo === "warn" ? "AVISO" : "INFO"}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 ))}
               </div>
+            )}
+          </div>
+        );
+      })()}
+
+      {/* TAB: Asesor IA */}
+      {tab === "ia" && (
+        <div className="space-y-4">
+          {!iaResultado && !iaLoading && (
+            <div className="bg-white border border-gray-200 rounded-2xl p-8 text-center">
+              <div className="w-16 h-16 mx-auto mb-4 bg-gradient-to-br from-indigo-500 to-violet-600 rounded-2xl flex items-center justify-center">
+                <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+              </div>
+              <h3 className="text-lg font-black text-gray-900 mb-2">Asesor fiscal IA</h3>
+              <p className="text-sm text-gray-500 max-w-lg mx-auto mb-6">
+                La IA analizará tu contabilidad completa: ingresos, gastos, IVA, retenciones, saldos pendientes, rentabilidad por actividad y estado VeriFactu. Recibirás un informe con diagnóstico, problemas y un plan de acción concreto.
+              </p>
+              <button onClick={lanzarIA}
+                className="bg-gradient-to-r from-indigo-600 to-violet-600 text-white px-8 py-3 rounded-xl font-black text-sm hover:from-indigo-500 hover:to-violet-500 shadow-lg shadow-indigo-200 transition-all">
+                Lanzar análisis IA
+              </button>
             </div>
-          ))}
+          )}
+          {iaLoading && (
+            <div className="bg-white border border-gray-200 rounded-2xl p-12 text-center">
+              <div className="animate-spin w-10 h-10 border-4 border-indigo-200 border-t-indigo-600 rounded-full mx-auto mb-4"/>
+              <div className="text-sm font-bold text-gray-700">Analizando tu contabilidad...</div>
+              <div className="text-xs text-gray-400 mt-1">La IA está revisando facturas, IVA, retenciones, saldos y rentabilidad</div>
+            </div>
+          )}
+          {iaError && (
+            <div className="bg-rose-50 border border-rose-200 rounded-2xl p-6">
+              <div className="text-sm font-bold text-rose-700 mb-2">Error en el análisis</div>
+              <div className="text-xs text-rose-600 mb-4">{iaError}</div>
+              <button onClick={lanzarIA} className="bg-rose-600 text-white px-4 py-2 rounded-lg text-xs font-bold hover:bg-rose-700">Reintentar</button>
+            </div>
+          )}
+          {iaResultado && (
+            <div className="space-y-4">
+              <div className="flex justify-between items-center">
+                <div className="text-xs text-gray-500">Análisis generado: {new Date().toLocaleString("es-ES")}</div>
+                <div className="flex gap-2">
+                  <button onClick={lanzarIA} className="px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-100 text-indigo-700 hover:bg-indigo-200 border border-indigo-200">Nuevo análisis</button>
+                  <button onClick={() => {
+                    const html = `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><title>Informe Asesor Fiscal IA</title>
+                    <style>@page{margin:20mm}body{font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;color:#1e293b;line-height:1.7;max-width:700px;margin:0 auto}
+                    h1{font-size:20px;font-weight:900;color:#0f172a;border-bottom:3px solid #0f172a;padding-bottom:8px;margin-top:24px}
+                    h2{font-size:15px;font-weight:800;color:#1e293b;margin-top:20px}
+                    p{margin:6px 0}
+                    .hdr{background:#0f172a;color:#fff;padding:24px;border-radius:12px;margin-bottom:24px}
+                    .hdr h1{color:#fff;border:none;margin:0;font-size:18px}
+                    .footer{margin-top:32px;padding:16px;background:#f1f5f9;border-radius:8px;font-size:10px;color:#64748b}
+                    </style></head><body>
+                    <div class="hdr"><h1>Informe del Asesor Fiscal IA</h1><div style="font-size:10px;opacity:.7;margin-top:4px">${new Date().toLocaleDateString("es-ES")} · ContaAuto</div></div>
+                    ${iaResultado.replace(/^# (.+)$/gm,"<h1>$1</h1>").replace(/^## (.+)$/gm,"<h2>$1</h2>").replace(/^- (.+)$/gm,"<p style='margin-left:16px'>• $1</p>").replace(/\n\n/g,"<br/><br/>").replace(/\n/g,"<br/>")}
+                    <div class="footer">Aviso legal: este informe es orientativo y no constituye asesoramiento fiscal vinculante. Consulta con un asesor fiscal colegiado antes de tomar decisiones tributarias. Generado con ContaAuto.</div>
+                    </body></html>`;
+                    downloadPDF(html, `informe-fiscal-ia-${new Date().toISOString().slice(0,10)}.pdf`);
+                  }} className="px-3 py-1.5 text-xs font-bold rounded-lg bg-slate-900 text-white hover:bg-slate-700">Descargar PDF</button>
+                </div>
+              </div>
+              <div className="bg-white border border-gray-200 rounded-2xl p-6 md:p-8">
+                {renderMD(iaResultado)}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
       {/* Nota legal */}
-      <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 text-xs text-slate-500 space-y-1">
-        <strong className="text-slate-700">Aviso legal:</strong> Esta auditoría es orientativa y automatizada. No sustituye la revisión de un asesor fiscal colegiado. ContaAuto implementa medidas preparatorias para VeriFactu (hash chain SHA-256, QR, inmutabilidad) pero NO es un software certificado por la AEAT. La obligatoriedad para autónomos entra en vigor el 1 de julio de 2027. Consulta con tu asesor la necesidad de migrar a un SIF homologado.
+      <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 text-xs text-slate-500">
+        <strong className="text-slate-700">Aviso legal:</strong> Esta auditoría es orientativa. No sustituye la revisión de un asesor fiscal colegiado. ContaAuto implementa medidas preparatorias para VeriFactu (hash chain SHA-256, QR, inmutabilidad) pero NO es software certificado por la AEAT. Obligatoriedad para autónomos: 1 julio 2027 (RD 254/2025). Los análisis de la IA son aproximaciones basadas en los datos registrados y no tienen carácter vinculante.
       </div>
     </div>
   );
@@ -2387,7 +2704,7 @@ function FacturaForm({ actividades, facturas, onSave, onCancel, initial, logo, s
 // ════════════════════════════════════════════════════════════
 
 function SaldoRow({ f, tipo, onView, onMarcarCobrado, onMarcarPagado }) {
-  const t = calcFactura(f.lineas, f.retencionPct, f.aplicarRecargo);
+  const t = calcFacturaReal(f);
   const diasDesde = Math.floor((new Date() - new Date(f.fecha)) / 86400000);
   const urgente   = diasDesde > 30;
   return (
@@ -2420,8 +2737,8 @@ function VistaSaldosPendientes({ facturas, onMarcarCobrado, onMarcarPagado, onVi
   const pendCobro = useMemo(() => facturas.filter(f => f.tipo==="venta" && !f.cobrado).sort((a,b) => new Date(a.fecha)-new Date(b.fecha)), [facturas]);
   const pendPago  = useMemo(() => facturas.filter(f => f.tipo==="gasto" && !f.pagado).sort((a,b) => new Date(a.fecha)-new Date(b.fecha)), [facturas]);
 
-  const totalCobro = pendCobro.reduce((s,f) => s + calcFactura(f.lineas,f.retencionPct,f.aplicarRecargo).total, 0);
-  const totalPago  = pendPago.reduce( (s,f) => s + calcFactura(f.lineas,f.retencionPct,f.aplicarRecargo).total, 0);
+  const totalCobro = pendCobro.reduce((s,f) => s + calcFacturaReal(f).total, 0);
+  const totalPago  = pendPago.reduce( (s,f) => s + calcFacturaReal(f).total, 0);
 
 
 
@@ -2721,9 +3038,8 @@ function ListaFacturas({ facturas, logo, onEdit, onDelete, onView, tipoFiltro, p
     [facturas,tipoFiltro,filterAct,search,periodMode,periodValue,periodYear]
   );
   const tots = useMemo(() => filtered.reduce((acc,f) => {
-    const t=calcFactura(f.lineas,f.retencionPct,f.aplicarRecargo);
-    const ivaReal = f.tipoDoc === "venta_tienda" ? (parseFloat(f.impuestoManual)||0) : t.totalIVA;
-    if(f.tipo==="venta"){acc.ingresos+=t.totalBase;acc.ivaRep+=ivaReal;}else{acc.gastos+=t.totalBase;acc.ivaSop+=ivaReal;}
+    const t=calcFacturaReal(f);
+    if(f.tipo==="venta"){acc.ingresos+=t.totalBase;acc.ivaRep+=t.totalIVA;}else{acc.gastos+=t.totalBase;acc.ivaSop+=t.totalIVA;}
     return acc;
   },{ingresos:0,gastos:0,ivaRep:0,ivaSop:0}), [filtered]);
 
@@ -2751,10 +3067,10 @@ function ListaFacturas({ facturas, logo, onEdit, onDelete, onView, tipoFiltro, p
               </thead>
               <tbody>
                 {filtered.map(f => {
-                  const t=calcFactura(f.lineas,f.retencionPct,f.aplicarRecargo);
+                  const t=calcFacturaReal(f);
                   const esTienda = f.tipoDoc === "venta_tienda";
-                  const ivaReal = esTienda ? (parseFloat(f.impuestoManual)||0) : t.totalIVA;
-                  const totalReal = esTienda ? (t.totalBase + ivaReal) : t.total;
+                  const ivaReal = t.totalIVA;
+                  const totalReal = t.total;
                   const isV=f.tipo==="venta";
                   const pendiente = isV ? !f.cobrado : !f.pagado;
                   return (
@@ -2819,7 +3135,7 @@ function ListaFacturas({ facturas, logo, onEdit, onDelete, onView, tipoFiltro, p
 function buildResumenContablePrintHTML({ pLabel, qLabel, resF, resN, gastosTotal, ivaAPagar, pagoIRPF_F, irpf111, factP, nomiP, porActividad, periodMode, periodValue, periodYear }) {
   const now = new Date().toLocaleDateString("es-ES", { day:"2-digit", month:"long", year:"numeric" });
   const rowsFacturas = (tipo) => factP.filter(f=>f.tipo===tipo).map(f=>{
-    const t = calcFactura(f.lineas, f.retencionPct, f.aplicarRecargo);
+    const t = calcFacturaReal(f);
     const nombre = f.clienteNombre || f.cliente_nombre || "-";
     const nif = f.clienteNif || f.cliente_nif || "-";
     return `<tr>
@@ -2958,8 +3274,8 @@ function Dashboard({ facturas, nominas, trabajadores, periodMode, periodValue, p
   const pLabel = getPeriodLabel(periodMode,periodValue,periodYear);
 
   // Pendientes globales (sin filtro de período)
-  const pendCobro  = facturas.filter(f=>f.tipo==="venta"&&!f.cobrado).reduce((s,f)=>s+calcFactura(f.lineas,f.retencionPct,f.aplicarRecargo).total,0);
-  const pendPago   = facturas.filter(f=>f.tipo==="gasto"&&!f.pagado).reduce((s,f)=>s+calcFactura(f.lineas,f.retencionPct,f.aplicarRecargo).total,0);
+  const pendCobro  = facturas.filter(f=>f.tipo==="venta"&&!f.cobrado).reduce((s,f)=>s+calcFacturaReal(f).total,0);
+  const pendPago   = facturas.filter(f=>f.tipo==="gasto"&&!f.pagado).reduce((s,f)=>s+calcFacturaReal(f).total,0);
   const nPendC     = facturas.filter(f=>f.tipo==="venta"&&!f.cobrado).length;
   const nPendP     = facturas.filter(f=>f.tipo==="gasto"&&!f.pagado).length;
 
@@ -2984,7 +3300,7 @@ function Dashboard({ facturas, nominas, trabajadores, periodMode, periodValue, p
 
   const porActividad = useMemo(() => {
     const map={};
-    factP.forEach(f=>{if(!map[f.actividad])map[f.actividad]={ingresos:0,gastos:0,n:0};const t=calcFactura(f.lineas,f.retencionPct,f.aplicarRecargo);if(f.tipo==="venta")map[f.actividad].ingresos+=t.totalBase;else map[f.actividad].gastos+=t.totalBase;map[f.actividad].n++;});
+    factP.forEach(f=>{if(!map[f.actividad])map[f.actividad]={ingresos:0,gastos:0,n:0};const t=calcFacturaReal(f);if(f.tipo==="venta")map[f.actividad].ingresos+=t.totalBase;else map[f.actividad].gastos+=t.totalBase;map[f.actividad].n++;});
     return Object.entries(map).sort((a,b)=>(b[1].ingresos+b[1].gastos)-(a[1].ingresos+a[1].gastos));
   }, [factP]);
   const maxBar = Math.max(...porActividad.map(([,v])=>v.ingresos+v.gastos),1);
@@ -3194,7 +3510,7 @@ function calc347(facturas, year) {
   facturas
     .filter(f => new Date(f.fecha).getFullYear() === year)
     .forEach(f => {
-      const t = calcFactura(f.lineas, f.retencionPct, f.aplicarRecargo);
+      const t = calcFacturaReal(f);
       const clave = (f.nif || f.cliente || "").toLowerCase().trim() || f.cliente.toLowerCase().trim();
       const nombre = f.cliente || "Sin nombre";
       const nif    = f.nif || "";
@@ -3821,10 +4137,10 @@ function VistaExtractoBancario({ facturas, nominas }) {
 
   const factsDelMes  = facturas.filter(f => { const d = new Date(f.fecha); return d.getFullYear() === anio && d.getMonth() === mes; });
   const nomiDelMes   = nominas.filter(n => n.mes === mes && n.anio === anio);
-  const totalVentas  = factsDelMes.filter(f => f.tipo === "venta").reduce((s,f) => s + calcFactura(f.lineas, f.retencionPct, f.aplicarRecargo).totalBase, 0);
-  const totalGastos  = factsDelMes.filter(f => f.tipo === "gasto").reduce((s,f) => s + calcFactura(f.lineas, f.retencionPct, f.aplicarRecargo).totalBase, 0);
+  const totalVentas  = factsDelMes.filter(f => f.tipo === "venta").reduce((s,f) => s + calcFacturaReal(f).totalBase, 0);
+  const totalGastos  = factsDelMes.filter(f => f.tipo === "gasto").reduce((s,f) => s + calcFacturaReal(f).totalBase, 0);
   const totalNominas = nomiDelMes.reduce((s,n) => s + calcNomina(n).costeEmpresa, 0);
-  const retsSop      = factsDelMes.filter(f => f.tipo === "venta").reduce((s,f) => s + calcFactura(f.lineas, f.retencionPct, f.aplicarRecargo).totalRetencion, 0);
+  const retsSop      = factsDelMes.filter(f => f.tipo === "venta").reduce((s,f) => s + calcFacturaReal(f).totalRetencion, 0);
 
   const cargarTexto = (raw) => {
     const parsed = parsearExtracto(raw);
@@ -4223,7 +4539,7 @@ function PantallaBienvenida({ onEnter, facturas, contactos, nominas }) {
   const cy = new Date().getFullYear();
   const totalIngresos = facturas
     .filter(f => f.tipo === "venta" && new Date(f.fecha).getFullYear() === cy)
-    .reduce((s,f) => s + calcFactura(f.lineas, f.retencionPct, f.aplicarRecargo).totalBase, 0);
+    .reduce((s,f) => s + calcFacturaReal(f).totalBase, 0);
   const pendCobro = facturas.filter(f => f.tipo==="venta" && !f.cobrado).length;
   const pendPago  = facturas.filter(f => f.tipo==="gasto" && !f.pagado).length;
 
@@ -4673,7 +4989,7 @@ function VistaTesoria({ facturas }) {
     const venc = new Date(base);
     // Plazo estimado: ventas 30 dias, gastos al momento
     venc.setDate(base.getDate() + (f.tipo === "venta" ? 30 : 7));
-    const total = calcFactura(f.lineas || [], f.retencionPct || 0, f.aplicarRecargo || false);
+    const total = calcFacturaReal(f);
     const importe = f.tipo === "venta" ? (total.total - (total.totalRetencion || 0)) : total.total;
 
     let asignada = false;
@@ -4800,7 +5116,7 @@ function VistaModelos({ facturas, nominas, periodYear }) {
   const calcMod303 = () => {
     let ivaRepercutido = 0, ivaDeducible = 0, baseRep = 0, baseDed = 0;
     factsTrim.forEach(f => {
-      const calc = calcFactura(f.lineas||[], f.retencionPct||0, f.aplicarRecargo||false);
+      const calc = calcFacturaReal(f);
       if (f.tipo === "venta") { ivaRepercutido += calc.totalIVA; baseRep += calc.totalBase; }
       else { ivaDeducible += calc.totalIVA; baseDed += calc.totalBase; }
     });
@@ -4812,7 +5128,7 @@ function VistaModelos({ facturas, nominas, periodYear }) {
   const calcMod130 = () => {
     let ingresos = 0, gastos = 0;
     factsTrim.forEach(f => {
-      const calc = calcFactura(f.lineas||[], 0, false);
+      const calc = calcFacturaReal(f);
       if (f.tipo === "venta") ingresos += calc.totalBase;
       else gastos += calc.totalBase;
     });
@@ -6333,8 +6649,8 @@ function ContaAutoApp() {
       const ng = nominas.filter(n=>n.mes===m&&n.anio===y);
       return {
         label: ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"][m],
-        ventas:  fs.filter(f=>f.tipo==="venta").reduce((s,f)=>s+calcFactura(f.lineas,f.retencionPct,f.aplicarRecargo).totalBase,0),
-        gastos:  fs.filter(f=>f.tipo==="gasto").reduce((s,f)=>s+calcFactura(f.lineas,f.retencionPct,f.aplicarRecargo).totalBase,0),
+        ventas:  fs.filter(f=>f.tipo==="venta").reduce((s,f)=>s+calcFacturaReal(f).totalBase,0),
+        gastos:  fs.filter(f=>f.tipo==="gasto").reduce((s,f)=>s+calcFacturaReal(f).totalBase,0),
         nominas: ng.reduce((s,n)=>s+calcNomina(n).costeEmpresa,0),
       };
     });
@@ -6534,7 +6850,7 @@ function ContaAutoApp() {
                 {view==="activos"     && <SafeView name="Activos"><VistaActivos activos={activos} onNew={()=>{setEditing(null);setSubview("new-activo");}} onEdit={a=>{setEditing(a);setSubview("edit-activo");}} onDelete={delActivo} periodYear={periodYear}/></SafeView>}
                 {view==="recurrentes" && <SafeView name="Recurrentes"><VistaRecurrentes recurrentes={recurrentes} actividades={actividades} contactos={contactos} onNew={()=>{setEditing(null);setSubview("new-recurrente");}} onEdit={r=>{setEditing(r);setSubview("edit-recurrente");}} onDelete={delRecurrente} onGenerar={generarDesdeRecurrente}/></SafeView>}
                 {view==="lector"      && <SafeView name="Lector Facturas"><VistaLectorIA actividades={actividades} onFacturaExtraida={f=>{window.__plantillaRecurrente=f;setEditing(null);setView("nueva");setSubview("nueva-gasto");}}/></SafeView>}
-                {view==="auditoria"   && <VistaAuditoria facturas={facturas}/>}
+                {view==="auditoria"   && <VistaAuditoria facturas={facturas} nominas={nominas}/>}
               </>
             )}
 
