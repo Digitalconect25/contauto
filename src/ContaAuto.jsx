@@ -534,74 +534,21 @@ function downloadPDF(html, filename) {
 }
 
 // ════════════════════════════════════════════════════════════
-// HELPER IA: llamada centralizada con API key
+// HELPER IA: llamada a Anthropic (gratis dentro de artefactos Claude.ai)
 // ════════════════════════════════════════════════════════════
 
-function getAIKey() {
-  try { return localStorage.getItem("contaauto_ai_key") || ""; } catch { return ""; }
-}
-function setAIKey(key) {
-  try { localStorage.setItem("contaauto_ai_key", key.trim()); } catch { /* noop */ }
-}
-
 async function callAI({ messages, max_tokens = 2000, model = "claude-sonnet-4-20250514" }) {
-  const key = getAIKey();
-  if (!key) throw new Error("NO_KEY");
   const resp = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": key,
-      "anthropic-version": "2023-06-01",
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ model, max_tokens, messages })
   });
   if (!resp.ok) {
     const body = await resp.text();
-    if (resp.status === 401) throw new Error("API_KEY_INVALID");
     throw new Error(`Error API ${resp.status}: ${body}`);
   }
   const data = await resp.json();
   return (data.content || []).filter(b => b.type === "text").map(b => b.text).join("\n");
-}
-
-function ConfigAPIKey({ onClose }) {
-  const [key, setKey] = useState(getAIKey());
-  const [test, setTest] = useState(null);
-  const doTest = async () => {
-    setTest("testing");
-    setAIKey(key);
-    try {
-      await callAI({ messages: [{ role: "user", content: "Di solo OK" }], max_tokens: 10 });
-      setTest("ok");
-    } catch { setTest("fail"); }
-  };
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(15,23,42,0.6)", backdropFilter: "blur(6px)" }}>
-      <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden">
-        <div className="bg-slate-900 text-white p-5">
-          <h3 className="font-black text-lg">Configurar clave API</h3>
-          <p className="text-xs text-slate-400 mt-1">Necesaria para las funciones de IA (lector de facturas, asesor fiscal, extracto bancario).</p>
-        </div>
-        <div className="p-5 space-y-4">
-          <div>
-            <label className="text-xs font-bold text-gray-600 block mb-1">Clave API de Anthropic</label>
-            <input type="password" value={key} onChange={e => setKey(e.target.value)} placeholder="sk-ant-..." className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm font-mono focus:ring-2 focus:ring-indigo-300 outline-none"/>
-            <p className="text-xs text-gray-400 mt-1">Consíguela en console.anthropic.com. Se guarda solo en tu navegador.</p>
-          </div>
-          {test === "ok" && <div className="text-sm text-emerald-700 bg-emerald-50 px-3 py-2 rounded-lg font-semibold">Conexión correcta</div>}
-          {test === "fail" && <div className="text-sm text-rose-700 bg-rose-50 px-3 py-2 rounded-lg font-semibold">Clave inválida o sin saldo</div>}
-          <div className="flex gap-2">
-            <button onClick={doTest} disabled={!key.trim() || test === "testing"} className="flex-1 py-2.5 bg-indigo-600 text-white rounded-xl text-sm font-bold hover:bg-indigo-500 disabled:opacity-50">
-              {test === "testing" ? "Probando..." : "Probar conexión"}
-            </button>
-            <button onClick={() => { setAIKey(key); onClose(); }} className="flex-1 py-2.5 bg-slate-900 text-white rounded-xl text-sm font-bold hover:bg-slate-700">Guardar</button>
-          </div>
-          <button onClick={onClose} className="w-full text-xs text-gray-400 hover:text-gray-600 py-1">Cerrar</button>
-        </div>
-      </div>
-    </div>
-  );
 }
 
 // ════════════════════════════════════════════════════════════
@@ -2351,9 +2298,7 @@ Escribe en español de España, tono profesional pero cercano. Tutea al cliente.
       const txt = await callAI({ messages: [{ role: "user", content: prompt }], max_tokens: 3000 });
       setIaResultado(txt);
     } catch (err) {
-      if (err.message === "NO_KEY") setIaError("Configura tu clave API de Anthropic para usar el asesor IA. Pulsa el botón de configuración en la barra lateral.");
-      else if (err.message === "API_KEY_INVALID") setIaError("La clave API no es válida o no tiene saldo. Revísala en la configuración.");
-      else setIaError(err.message || "Error desconocido.");
+      setIaError(err.message || "Error al conectar con la IA. Inténtalo de nuevo.");
     }
     setIaLoading(false);
   };
@@ -4309,9 +4254,7 @@ Escribe en un tono profesional, riguroso y técnico. No uses lenguaje condescend
       setAnalisis(txt);
       setFase("resultado");
     } catch (err) {
-      if (err.message === "NO_KEY") setErrMsg("Configura tu clave API de Anthropic para usar el asesor IA. Ve a la sección Auditoría o pulsa el botón de configuración.");
-      else if (err.message === "API_KEY_INVALID") setErrMsg("Clave API inválida o sin saldo.");
-      else setErrMsg(err.message || "Error desconocido.");
+      setErrMsg(err.message || "Error al conectar con la IA.");
       setFase("error");
     }
   };
@@ -5832,7 +5775,6 @@ function VistaLectorIA({ actividades, onFacturaExtraida }) {
   const [cargando, setCargando] = useState(false);
   const [resultado, setResultado] = useState(null);
   const [error, setError] = useState("");
-  const [showConfig, setShowConfig] = useState(false);
   const inputRef = React.useRef();
 
   const handleArchivo = (e) => {
@@ -5851,7 +5793,6 @@ function VistaLectorIA({ actividades, onFacturaExtraida }) {
 
   const analizar = async () => {
     if (!archivo) return;
-    if (!getAIKey()) { setShowConfig(true); return; }
     setCargando(true); setError(""); setResultado(null);
     try {
       const b64 = await new Promise((res,rej)=>{
@@ -5902,14 +5843,9 @@ Reglas:
         { type: "text", text: prompt }
       ];
 
-      const key = getAIKey();
       const resp = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": key,
-          "anthropic-version": "2023-06-01",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           model: "claude-sonnet-4-20250514",
           max_tokens: 1500,
@@ -5919,7 +5855,6 @@ Reglas:
 
       if (!resp.ok) {
         const errBody = await resp.json().catch(() => ({}));
-        if (resp.status === 401) throw new Error("Clave API inválida. Configúrala de nuevo.");
         throw new Error(errBody.error?.message || `Error ${resp.status}`);
       }
 
@@ -5952,17 +5887,9 @@ Reglas:
 
   return (
     <div className="p-6 max-w-3xl mx-auto space-y-6">
-      {showConfig && <ConfigAPIKey onClose={() => setShowConfig(false)}/>}
-
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-xl font-bold text-slate-800">Lector de Facturas con IA</h2>
-          <p className="text-sm text-slate-500 mt-1">Sube una factura y la IA extrae los datos, detecta si es ingreso o gasto y la prepara para registrar.</p>
-        </div>
-        <button onClick={() => setShowConfig(true)} className="text-xs text-slate-500 hover:text-slate-700 border border-slate-200 rounded-lg px-3 py-1.5 flex items-center gap-1">
-          {getAIKey() ? <span className="w-2 h-2 rounded-full bg-emerald-500"/> : <span className="w-2 h-2 rounded-full bg-rose-400"/>}
-          API Key
-        </button>
+      <div>
+        <h2 className="text-xl font-bold text-slate-800">Lector de Facturas con IA</h2>
+        <p className="text-sm text-slate-500 mt-1">Sube una factura y la IA extrae los datos, detecta si es ingreso o gasto y la prepara para registrar.</p>
       </div>
 
       {/* Upload zone */}
@@ -6321,7 +6248,6 @@ function ContaAutoApp() {
   const [recurrentes,   setRecurrentes]  = useState([]); // logotipo Digital Conect
 
   const [pantallaBienvenida, setPantallaBienvenida] = useState(false);
-  const [showAPIConfig, setShowAPIConfig] = useState(false);
   const [view,       setView]       = useState("dashboard");
   const [subview,    setSubview]    = useState(null);
   const [editing,    setEditing]    = useState(null);
@@ -6850,7 +6776,6 @@ function ContaAutoApp() {
 
   return (
     <div className="flex h-screen overflow-hidden" style={{background:"#f1f5f9", fontFamily:"'DM Sans','Segoe UI',sans-serif"}}>
-      {showAPIConfig && <ConfigAPIKey onClose={() => setShowAPIConfig(false)}/>}
 
       {/* ══ SIDEBAR IZQUIERDO ══════════════════════════════ */}
       <aside className="flex flex-col flex-shrink-0 bg-slate-900 text-white overflow-y-auto"
@@ -6928,17 +6853,6 @@ function ContaAutoApp() {
 
         {/* Footer del sidebar */}
         <div className="px-4 py-4 border-t" style={{borderColor:"rgba(255,255,255,.07)"}}>
-          <button onClick={() => setShowAPIConfig(true)}
-            className="w-full flex items-center gap-2 py-2 px-3 rounded-xl text-xs font-semibold transition-colors mb-1"
-            style={{color:"rgba(255,255,255,.4)"}}
-            onMouseEnter={e=>{e.currentTarget.style.background="rgba(255,255,255,.06)";e.currentTarget.style.color="rgba(255,255,255,.7)"}}
-            onMouseLeave={e=>{e.currentTarget.style.background="transparent";e.currentTarget.style.color="rgba(255,255,255,.4)"}}>
-            <svg viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5 flex-shrink-0">
-              <path fillRule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clipRule="evenodd"/>
-            </svg>
-            Clave API (IA)
-            {getAIKey() ? <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 ml-auto"/> : <span className="w-1.5 h-1.5 rounded-full bg-rose-400 ml-auto"/>}
-          </button>
           <button onClick={() => setPantallaBienvenida(true)}
             className="w-full flex items-center gap-2 py-2 px-3 rounded-xl text-xs font-semibold transition-colors"
             style={{color:"rgba(255,255,255,.4)"}}
