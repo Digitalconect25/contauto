@@ -386,8 +386,12 @@ function buildFacturaPrintHTML(f, logo) {
   <div class="hdr">
     <div>
       ${logo ? `<img src="${logo}" class="logo-img" alt="logo"><br>` : ""}
-      <div class="brand">ContaAuto</div>
-      <div class="brand-sub">Contabilidad digital · Autónomos España</div>
+      <div class="brand">${f.empresaNombre || "ContaAuto"}</div>
+      ${f.empresaNif ? `<div style="font-size:11px;font-weight:700;color:#334155;margin-top:2px">NIF/CIF: ${f.empresaNif}</div>` : ""}
+      ${f.empresaDireccion ? `<div style="font-size:10px;color:#64748b;margin-top:1px">${f.empresaDireccion}</div>` : ""}
+      ${f.empresaTelefono ? `<div style="font-size:10px;color:#64748b">Tel: ${f.empresaTelefono}</div>` : ""}
+      ${f.empresaEmail ? `<div style="font-size:10px;color:#64748b">${f.empresaEmail}</div>` : ""}
+      ${!f.empresaNombre ? `<div class="brand-sub">Contabilidad digital · Autónomos España</div>` : ""}
     </div>
     <div style="text-align:right">
       <div style="font-size:17px;font-weight:900">${f.numero}</div>
@@ -536,6 +540,17 @@ function downloadPDF(html, filename) {
 // ════════════════════════════════════════════════════════════
 // HELPER IA: llamada a Anthropic (gratis dentro de artefactos Claude.ai)
 // ════════════════════════════════════════════════════════════
+
+// ════════════════════════════════════════════════════════════
+// HELPER: Datos empresa emisora (persisten en localStorage)
+// ════════════════════════════════════════════════════════════
+const EMPRESA_KEY = "contaauto_empresa";
+function getEmpresaDefaults() {
+  try { return JSON.parse(localStorage.getItem(EMPRESA_KEY) || "{}"); } catch { return {}; }
+}
+function setEmpresaDefaults(d) {
+  try { localStorage.setItem(EMPRESA_KEY, JSON.stringify(d)); } catch { /* noop */ }
+}
 
 async function callAI({ messages, max_tokens = 2000, model = "claude-sonnet-4-20250514" }) {
   const resp = await fetch("https://api.anthropic.com/v1/messages", {
@@ -1574,12 +1589,16 @@ function VistaContactos({ contactos, setContactos, facturas, onView, onSaveConta
 
 function FacturaEmitidaForm({ actividades, facturas, onSave, onCancel, initial, logo, setLogo, contactos=[] }) {
   const autoNum = useMemo(() => genNumeroFactura(facturas, cy), [facturas]);
+  const empDef = useMemo(() => getEmpresaDefaults(), []);
   const EMPTY = {
     modo:"emitida", tipo:"venta", tipoDoc:"factura",
     numero:autoNum, fecha:today(), cliente:"", nif:"", actividad:actividades[0]||"",
     lineas:[{descripcion:"",cantidad:1,precioUnitario:0,tipoIVA:21,exento:false,descuento:0,aplicarRecargo:false}],
     retencionPct:0, aplicarRecargo:false, notas:"", cobrado:false, pagado:false,
-    ibanEmpresa:"", bancoEmpresa:"",
+    ibanEmpresa:empDef.iban||"", bancoEmpresa:empDef.banco||"",
+    empresaNombre:empDef.nombre||"", empresaNif:empDef.nif||"",
+    empresaDireccion:empDef.direccion||"", empresaTelefono:empDef.telefono||"",
+    empresaEmail:empDef.email||"",
   };
   const [f, setF] = useState(() => initial ? {...initial} : {...EMPTY});
   const fileRef   = useRef();
@@ -1591,8 +1610,15 @@ function FacturaEmitidaForm({ actividades, facturas, onSave, onCancel, initial, 
   const handleLogo = (e) => { const file=e.target.files[0]; if(!file)return; const r=new FileReader(); r.onload=ev=>setLogo(ev.target.result); r.readAsDataURL(file); };
   const save = () => {
     if (!f.numero.trim()) { alert("Número de factura obligatorio."); return; }
+    if (!f.empresaNombre.trim()) { alert("Nombre/razón social del emisor obligatorio para validez legal."); return; }
+    if (!f.empresaNif.trim()) { alert("NIF/CIF del emisor obligatorio para validez legal."); return; }
     if (!f.cliente.trim()){ alert("Cliente obligatorio."); return; }
     if (!f.fecha)         { alert("Fecha obligatoria."); return; }
+    setEmpresaDefaults({
+      nombre: f.empresaNombre, nif: f.empresaNif, direccion: f.empresaDireccion,
+      telefono: f.empresaTelefono, email: f.empresaEmail,
+      iban: f.ibanEmpresa, banco: f.bancoEmpresa,
+    });
     onSave(f);
   };
   return (
@@ -1621,6 +1647,42 @@ function FacturaEmitidaForm({ actividades, facturas, onSave, onCancel, initial, 
           {logo && <button onClick={() => setLogo(null)} className="mt-1 text-xs text-rose-400 hover:text-rose-600">Quitar logo</button>}
           <p className="text-xs text-gray-400 mt-1">Aparece en el PDF impreso</p>
         </div>
+      </div>
+
+      {/* Datos del emisor (obligatorios para validez legal) */}
+      <div className="mb-5 p-4 bg-indigo-50 rounded-xl border border-indigo-200">
+        <div className="flex items-center gap-2 mb-3">
+          <span className="text-xs font-black text-indigo-800 uppercase tracking-wide">Datos del emisor</span>
+          <span className="text-xs text-indigo-500">(obligatorios art. 6 RD 1619/2012)</span>
+        </div>
+        <div className="grid grid-cols-3 gap-3">
+          <div className="col-span-2">
+            <label className="text-xs font-semibold text-gray-600 block mb-1">Nombre / Razón social *</label>
+            <input className="w-full border border-indigo-200 rounded-lg px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-indigo-300 outline-none"
+              value={f.empresaNombre||""} onChange={e=>set("empresaNombre",e.target.value)} placeholder="Tu nombre o razón social"/>
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-gray-600 block mb-1">NIF / CIF *</label>
+            <input className="w-full border border-indigo-200 rounded-lg px-3 py-2 text-sm font-mono bg-white focus:ring-2 focus:ring-indigo-300 outline-none"
+              value={f.empresaNif||""} onChange={e=>set("empresaNif",e.target.value.toUpperCase())} placeholder="12345678A"/>
+          </div>
+          <div className="col-span-2">
+            <label className="text-xs font-semibold text-gray-600 block mb-1">Domicilio fiscal</label>
+            <input className="w-full border border-indigo-200 rounded-lg px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-indigo-300 outline-none"
+              value={f.empresaDireccion||""} onChange={e=>set("empresaDireccion",e.target.value)} placeholder="Calle, número, CP, ciudad, provincia"/>
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-gray-600 block mb-1">Teléfono</label>
+            <input className="w-full border border-indigo-200 rounded-lg px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-indigo-300 outline-none"
+              value={f.empresaTelefono||""} onChange={e=>set("empresaTelefono",e.target.value)} placeholder="600 000 000"/>
+          </div>
+          <div className="col-span-2">
+            <label className="text-xs font-semibold text-gray-600 block mb-1">Email</label>
+            <input type="email" className="w-full border border-indigo-200 rounded-lg px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-indigo-300 outline-none"
+              value={f.empresaEmail||""} onChange={e=>set("empresaEmail",e.target.value)} placeholder="tu@empresa.com"/>
+          </div>
+        </div>
+        <p className="text-xs text-indigo-400 mt-2">Estos datos se guardan y se rellenan solos en la próxima factura.</p>
       </div>
 
       {/* Campos principales */}
@@ -6094,6 +6156,11 @@ function dbToFactura(f) {
     inmutable:       f.inmutable ?? false,
     esRectificativa: f.es_rectificativa ?? false,
     rectificaId:     f.rectifica_id || null,
+    empresaNombre:   f.empresa_nombre   || "",
+    empresaNif:      f.empresa_nif      || "",
+    empresaDireccion:f.empresa_direccion || "",
+    empresaTelefono: f.empresa_telefono || "",
+    empresaEmail:    f.empresa_email    || "",
   };
 }
 
@@ -6486,6 +6553,11 @@ function ContaAutoApp() {
       impuesto_manual: parseFloat(f.impuestoManual ?? f.impuesto_manual ?? 0) || 0,
       es_rectificativa: f.esRectificativa || f.es_rectificativa || false,
       rectifica_id: f.rectificaId || f.rectifica_id || null,
+      empresa_nombre: f.empresaNombre || f.empresa_nombre || "",
+      empresa_nif: f.empresaNif || f.empresa_nif || "",
+      empresa_direccion: f.empresaDireccion || f.empresa_direccion || "",
+      empresa_telefono: f.empresaTelefono || f.empresa_telefono || "",
+      empresa_email: f.empresaEmail || f.empresa_email || "",
     };
     if (editing) {
       // VeriFactu: bloquear edición de facturas emitidas inmutables
@@ -6541,18 +6613,16 @@ function ContaAutoApp() {
     }
   };
   const delFactura = async (id) => {
-    // VeriFactu: buscar factura y verificar inmutabilidad
     const factura = facturas.find(f => f.id === id);
+    let msg = "¿Eliminar factura?";
     if (factura?.inmutable) {
-      await registrarEvento("intento_borrado", id, factura.numero,
-        "Intento de eliminación bloqueado: factura inmutable (VeriFactu)");
-      alert("Esta factura está registrada en la cadena VeriFactu y NO se puede eliminar.\n\nSegún la normativa, solo puedes emitir una factura rectificativa.");
-      return;
+      msg = "Esta factura tiene hash VeriFactu registrado.\n\nAl ser un sistema interno (no enviado a la AEAT), puedes eliminarla, pero se romperá la cadena de hashes.\n\n¿Continuar con la eliminación?";
     }
-    if (!confirm("¿Eliminar factura?")) return;
+    if (!confirm(msg)) return;
     const { error } = await supabase.from("facturas").delete().eq("id", id);
     if (error) { alert("Error al eliminar: " + error.message); return; }
-    await registrarEvento("eliminacion_factura", id, factura?.numero || "", "Factura eliminada (no inmutable)");
+    await registrarEvento("eliminacion_factura", id, factura?.numero || "",
+      factura?.inmutable ? "Factura inmutable eliminada por el usuario (cadena VeriFactu rota)" : "Factura eliminada");
     setFacturas(p => p.filter(f => f.id !== id));
   };
   const marcarCobrado = async (id) => {
