@@ -3446,13 +3446,80 @@ function Dashboard({ facturas, nominas, trabajadores, periodMode, periodValue, p
             </div>
             <p className="text-xs text-amber-700 mb-3">Autoliquidación IVA · art. 71 LIVA</p>
             <div className="space-y-1.5 text-sm">
-              <div className="flex justify-between"><span className="text-gray-600">IVA repercutido (ventas)</span><span className="font-semibold font-mono text-emerald-700">+{fmt(qF.ivaRep)}</span></div>
-              <div className="flex justify-between"><span className="text-gray-600">IVA soportado (gastos)</span><span className="font-semibold font-mono text-rose-600">-{fmt(qF.ivaSop)}</span></div>
-              {ivaAPagar < 0 && <div className="text-xs text-indigo-600 mt-1">Crédito pendiente de compensar en trimestres siguientes o solicitar devolución (4T)</div>}
-              <div className="flex justify-between font-black border-t border-amber-300 pt-2 text-base">
-                <span className="text-amber-900">{ivaAPagar >= 0 ? "Cuota a ingresar" : "A compensar"}</span>
-                <span className="text-amber-900 font-mono">{ivaAPagar >= 0 ? fmt(ivaAPagar) : `${fmt(Math.abs(ivaAPagar))}`}</span>
-              </div>
+              {(() => {
+                const repG = {}; const sopG = {};
+                factsQ.forEach(f => {
+                  const esTienda = (f.tipoDoc||f.tipo_doc)==="venta_tienda";
+                  if (esTienda) {
+                    const t=calcFacturaReal(f);
+                    if(!repG["T"])repG["T"]={c:0,b:0,lbl:"Tienda"};
+                    repG["T"].b+=t.totalBase; repG["T"].c+=t.totalIVA; return;
+                  }
+                  (f.lineas||[]).forEach(l => {
+                    const pct=parseInt(l.tipoIVA||l.iva||0);
+                    const cv=calcLinea(l, f.aplicarRecargo||f.aplicar_recargo||false);
+                    const k=l.exento?"E":String(pct);
+                    if(f.tipo==="venta"){
+                      if(!repG[k])repG[k]={c:0,b:0,r:0,pct};
+                      repG[k].b+=cv.baseConDesc; repG[k].c+=cv.ivaAmt; repG[k].r+=cv.recargoAmt;
+                    } else {
+                      if(!sopG[k])sopG[k]={c:0,b:0,r:0,pct};
+                      sopG[k].b+=cv.baseConDesc; sopG[k].c+=cv.ivaAmt; sopG[k].r+=cv.recargoAmt;
+                    }
+                  });
+                });
+                const srt = obj => Object.entries(obj).filter(([,v])=>v.b>0||v.c>0).sort((a,b)=>a[0]==="E"?1:b[0]==="E"?-1:parseInt(b[0])-parseInt(a[0]));
+                const repArr=srt(repG); const sopArr=srt(sopG);
+                const tRepRec=repArr.reduce((s,[,v])=>s+(v.r||0),0);
+                const tSopRec=sopArr.reduce((s,[,v])=>s+(v.r||0),0);
+                return (<>
+                  <div className="rounded-lg overflow-hidden border border-emerald-600/30 mb-1">
+                    <div className="grid grid-cols-3 px-2.5 py-1 bg-emerald-900/30 text-xs font-bold text-emerald-200">
+                      <span>Repercutido (ventas)</span><span className="text-right">Base</span><span className="text-right">Cuota+R.eq.</span>
+                    </div>
+                    {repArr.length===0
+                      ? <div className="px-2.5 py-1 text-xs text-emerald-200/40 italic">Sin ventas</div>
+                      : repArr.map(([k,v])=>(
+                        <div key={k} className="grid grid-cols-3 px-2.5 py-0.5 text-xs text-emerald-100 border-t border-emerald-700/20">
+                          <span>{v.lbl?v.lbl:k==="E"?"Exento":`${k}%`}{(v.r||0)>0?" +RE":""}</span>
+                          <span className="text-right font-mono">{fmt(v.b)}</span>
+                          <span className="text-right font-mono text-emerald-300">+{fmt(v.c+(v.r||0))}</span>
+                        </div>
+                      ))
+                    }
+                    <div className="grid grid-cols-3 px-2.5 py-1 border-t border-emerald-600/40 text-xs font-black text-white bg-emerald-800/40">
+                      <span>Total rep.{tRepRec>0?` (R.eq.${fmt(tRepRec)})`:" "}</span>
+                      <span className="text-right font-mono">{fmt(repArr.reduce((s,[,v])=>s+v.b,0))}</span>
+                      <span className="text-right font-mono">+{fmt(qF.ivaRep+tRepRec)}</span>
+                    </div>
+                  </div>
+                  <div className="rounded-lg overflow-hidden border border-rose-600/30 mb-1">
+                    <div className="grid grid-cols-3 px-2.5 py-1 bg-rose-900/30 text-xs font-bold text-rose-200">
+                      <span>Soportado (gastos)</span><span className="text-right">Base</span><span className="text-right">Cuota+R.eq.</span>
+                    </div>
+                    {sopArr.length===0
+                      ? <div className="px-2.5 py-1 text-xs text-rose-200/40 italic">Sin gastos</div>
+                      : sopArr.map(([k,v])=>(
+                        <div key={k} className="grid grid-cols-3 px-2.5 py-0.5 text-xs text-rose-100 border-t border-rose-700/20">
+                          <span>{k==="E"?"Exento":`${k}%`}{(v.r||0)>0?" +RE":""}</span>
+                          <span className="text-right font-mono">{fmt(v.b)}</span>
+                          <span className="text-right font-mono text-rose-300">-{fmt(v.c+(v.r||0))}</span>
+                        </div>
+                      ))
+                    }
+                    <div className="grid grid-cols-3 px-2.5 py-1 border-t border-rose-600/40 text-xs font-black text-white bg-rose-800/40">
+                      <span>Total soportado</span>
+                      <span className="text-right font-mono">{fmt(sopArr.reduce((s,[,v])=>s+v.b,0))}</span>
+                      <span className="text-right font-mono">-{fmt(qF.ivaSop+tSopRec)}</span>
+                    </div>
+                  </div>
+                  {ivaAPagar < 0 && <div className="text-xs text-indigo-300 mt-1">Crédito a compensar o solicitar devolución en 4T</div>}
+                  <div className="flex justify-between font-black border-t border-amber-300 pt-2 text-base">
+                    <span className="text-amber-900">{ivaAPagar >= 0 ? "Cuota a ingresar" : "A compensar"}</span>
+                    <span className="text-amber-900 font-mono">{fmt(Math.abs(ivaAPagar))}</span>
+                  </div>
+                </>);
+              })()}
             </div>
           </div>
 
@@ -3806,6 +3873,556 @@ function Vista347({ facturas, year, availYears, onChangeYear }) {
 // ════════════════════════════════════════════════════════════
 // VISTA EXTRACTO BANCARIO + INSPECTOR FISCAL IA
 // ════════════════════════════════════════════════════════════
+
+// ════════════════════════════════════════════════════════════
+// INFORME GESTORÍA: Resultados por actividad por mes/trimestre/año
+// ════════════════════════════════════════════════════════════
+
+function calcInformeActividades(facturas, nominas, mode, value, year) {
+  const filtrar = (arr) => arr.filter(item => matchesPeriod(item, mode, value, year));
+  const factsFil = filtrar(facturas);
+  const nomisFil = filtrar(nominas);
+  const mapa = {};
+  const getAct = (act) => {
+    if (!mapa[act]) mapa[act] = {
+      actividad: act,
+      ventasBase:0, ventasIVA:0, ventasRecargo:0, ventasRetencion:0, ventasTotal:0, nVentas:0,
+      gastosBase:0, gastosIVA:0, gastosRecargo:0, gastosRetencion:0, gastosTotal:0, nGastos:0,
+      nominasBruto:0, nominasSSTrab:0, nominasIRPF:0, nominasNeto:0, nominasSSEmp:0, nominasCoste:0, nNominas:0,
+      tiendaSubtotal:0, tiendaImpuesto:0, tiendaCoste:0, tiendaBeneficio:0, nTienda:0,
+    };
+    return mapa[act];
+  };
+  factsFil.forEach(f => {
+    const act = f.actividad || "Sin actividad";
+    const d = getAct(act);
+    const t = calcFacturaReal(f);
+    const esTienda = (f.tipoDoc || f.tipo_doc) === "venta_tienda";
+    if (f.tipo === "venta") {
+      if (esTienda) {
+        d.tiendaSubtotal  += t.totalBase;
+        d.tiendaImpuesto  += t.totalIVA;
+        d.tiendaCoste     += (t.costeMercancia || 0);
+        d.tiendaBeneficio += (t.beneficioTienda || t.totalBase - (t.costeMercancia||0));
+        d.nTienda++;
+        d.ventasBase += t.totalBase; d.ventasIVA += t.totalIVA; d.ventasTotal += t.total; d.nVentas++;
+      } else {
+        d.ventasBase += t.totalBase; d.ventasIVA += t.totalIVA;
+        d.ventasRecargo += t.totalRecargo || 0;
+        d.ventasRetencion += t.totalRetencion || 0;
+        d.ventasTotal += t.total; d.nVentas++;
+      }
+    } else {
+      d.gastosBase += t.totalBase; d.gastosIVA += t.totalIVA;
+      d.gastosRecargo += t.totalRecargo || 0;
+      d.gastosRetencion += t.totalRetencion || 0;
+      d.gastosTotal += t.total; d.nGastos++;
+    }
+  });
+  if (nomisFil.length > 0) {
+    const dLab = getAct("Gastos Laborales");
+    nomisFil.forEach(n => {
+      const c = calcNomina(n);
+      dLab.nominasBruto += c.baseTotal; dLab.nominasSSTrab += c.ssTrab;
+      dLab.nominasIRPF += c.irpfAmt; dLab.nominasNeto += c.liquidoNeto;
+      dLab.nominasSSEmp += c.ssEmpresa; dLab.nominasCoste += c.costeEmpresa; dLab.nNominas++;
+      dLab.gastosBase += c.baseTotal; dLab.gastosTotal += c.costeEmpresa; dLab.nGastos++;
+    });
+  }
+  const actividades = Object.values(mapa).map(d => ({
+    ...d,
+    beneficioBruto:  d.ventasBase - d.gastosBase - d.nominasCoste,
+    ivaLiquidar:     d.ventasIVA + (d.ventasRecargo||0) - d.gastosIVA - (d.gastosRecargo||0),
+    irpfFraccionado: Math.max(0, (d.ventasBase - d.gastosBase - d.nominasCoste) * 0.20 - d.ventasRetencion),
+  }));
+  const zero = { ventasBase:0,ventasIVA:0,ventasRecargo:0,ventasRetencion:0,ventasTotal:0,
+    gastosBase:0,gastosIVA:0,gastosRecargo:0,gastosRetencion:0,gastosTotal:0,
+    nominasBruto:0,nominasSSTrab:0,nominasIRPF:0,nominasNeto:0,nominasSSEmp:0,nominasCoste:0,
+    beneficioBruto:0,ivaLiquidar:0,irpfFraccionado:0,nVentas:0,nGastos:0,nNominas:0 };
+  const tot = actividades.reduce((acc, d) => ({
+    ventasBase:      acc.ventasBase      + d.ventasBase,
+    ventasIVA:       acc.ventasIVA       + d.ventasIVA,
+    ventasRecargo:   acc.ventasRecargo   + (d.ventasRecargo||0),
+    ventasRetencion: acc.ventasRetencion + d.ventasRetencion,
+    ventasTotal:     acc.ventasTotal     + d.ventasTotal,
+    gastosBase:      acc.gastosBase      + d.gastosBase,
+    gastosIVA:       acc.gastosIVA       + d.gastosIVA,
+    gastosRecargo:   acc.gastosRecargo   + (d.gastosRecargo||0),
+    gastosRetencion: acc.gastosRetencion + (d.gastosRetencion||0),
+    gastosTotal:     acc.gastosTotal     + d.gastosTotal,
+    nominasBruto:    acc.nominasBruto    + d.nominasBruto,
+    nominasSSTrab:   acc.nominasSSTrab   + d.nominasSSTrab,
+    nominasIRPF:     acc.nominasIRPF     + d.nominasIRPF,
+    nominasNeto:     acc.nominasNeto     + d.nominasNeto,
+    nominasSSEmp:    acc.nominasSSEmp    + d.nominasSSEmp,
+    nominasCoste:    acc.nominasCoste    + d.nominasCoste,
+    beneficioBruto:  acc.beneficioBruto  + d.beneficioBruto,
+    ivaLiquidar:     acc.ivaLiquidar     + d.ivaLiquidar,
+    irpfFraccionado: acc.irpfFraccionado + d.irpfFraccionado,
+    nVentas:         acc.nVentas         + d.nVentas,
+    nGastos:         acc.nGastos         + d.nGastos,
+    nNominas:        acc.nNominas        + d.nNominas,
+  }), zero);
+  return { actividades: actividades.sort((a,b) => b.ventasBase - a.ventasBase), totales: tot };
+}
+
+function buildInformeGestoriaHTML(data, pLabel, empresaNombre, empresaNif, irpf111Nom) {
+  const now = new Date().toLocaleDateString("es-ES", { day:"2-digit", month:"long", year:"numeric" });
+  const { actividades, totales } = data;
+  const fmtN = v => (v||0).toLocaleString("es-ES", { minimumFractionDigits:2, maximumFractionDigits:2 });
+  const filaAct = (d) => `
+  <tr>
+    <td rowspan="4" style="background:#f8fafc;font-weight:700;font-size:12px;color:#0f172a;vertical-align:top;padding:10px 12px;border-left:4px solid #3b82f6">${d.actividad}</td>
+    <td class="lbl">Ingresos (base imponible)</td>
+    <td class="num green">+${fmtN(d.ventasBase)} €</td>
+    <td class="num">${d.nVentas} doc${d.nVentas!==1?"s":""}</td>
+  </tr>
+  <tr>
+    <td class="lbl">IVA repercutido${d.ventasRecargo>0?" + Rec.equiv.":""}</td>
+    <td class="num blue">+${fmtN(d.ventasIVA + (d.ventasRecargo||0))} €</td>
+    <td class="num">${d.ventasRetencion>0?"Ret. IRPF: -"+fmtN(d.ventasRetencion)+" €":""}</td>
+  </tr>
+  <tr>
+    <td class="lbl">Gastos deducibles (base)</td>
+    <td class="num red">-${fmtN(d.gastosBase + d.nominasCoste)} €</td>
+    <td class="num">${d.nGastos} doc${d.nGastos!==1?"s":""}${d.nNominas>0?" · "+d.nNominas+" nóm.":""}</td>
+  </tr>
+  <tr style="background:#f0fdf4">
+    <td class="lbl" style="font-weight:700">RESULTADO NETO</td>
+    <td class="num" style="font-weight:900;font-size:14px;color:${d.beneficioBruto>=0?"#15803d":"#dc2626"}">${d.beneficioBruto>=0?"+":""}${fmtN(d.beneficioBruto)} €</td>
+    <td class="num" style="font-size:10px;color:#64748b">IVA neto: ${fmtN(d.ivaLiquidar)} €<br>IRPF frac.: ${fmtN(d.irpfFraccionado)} €</td>
+  </tr>
+  ${d.nTienda>0?`<tr style="background:#faf5ff"><td class="lbl" colspan="2" style="color:#7e22ce;font-size:10px">
+    Tienda — Subtotal: ${fmtN(d.tiendaSubtotal)} € · IVA: ${fmtN(d.tiendaImpuesto)} € · Coste mercancía: ${fmtN(d.tiendaCoste)} € · Beneficio: ${fmtN(d.tiendaBeneficio)} €</td><td></td></tr>`:""}
+  <tr><td colspan="3" style="height:6px;background:transparent;border:none"></td></tr>`;
+  const css = `@page{margin:14mm 16mm;size:A4}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+body{font-family:'Helvetica Neue',Arial,sans-serif;font-size:11px;color:#0f172a;margin:0;line-height:1.5}
+.hdr{background:#0f172a;color:#fff;padding:16px 20px;border-radius:8px;margin-bottom:18px;display:flex;justify-content:space-between;align-items:center}
+.hdr h1{font-size:17px;font-weight:900;margin:0}.hdr p{font-size:9px;color:rgba(255,255,255,.55);margin:2px 0 0}
+.badge{background:#2563eb;color:#fff;padding:3px 10px;border-radius:20px;font-size:9px;font-weight:800;text-transform:uppercase}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:18px}
+.kpi{border:1px solid #e2e8f0;border-radius:7px;padding:9px 12px}
+.kpi-lbl{font-size:8px;color:#64748b;text-transform:uppercase;font-weight:700;letter-spacing:.05em;margin-bottom:2px}
+.kpi-val{font-size:14px;font-weight:900;font-family:monospace}
+.kpi-val.g{color:#15803d}.kpi-val.r{color:#dc2626}.kpi-val.b{color:#1d4ed8}
+table{width:100%;border-collapse:collapse;font-size:10.5px;margin-bottom:20px}
+thead th{background:#1e293b;color:#fff;padding:6px 10px;text-align:left;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.04em}
+thead th:not(:first-child){text-align:right}tbody td{padding:5px 9px;border-bottom:1px solid #f1f5f9;vertical-align:middle}
+.lbl{color:#475569}.num{text-align:right;font-family:monospace;font-weight:600}
+.green{color:#15803d}.red{color:#dc2626}.blue{color:#1d4ed8}
+.total-row td{background:#0f172a!important;color:#fff;font-weight:900;font-size:11.5px;padding:8px 10px;border:none}
+.fiscal{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:18px}
+.fbox{background:#f8fafc;border:1px solid #e2e8f0;border-radius:7px;padding:11px 13px}
+.fmod{font-size:8.5px;font-weight:900;text-transform:uppercase;color:#64748b;letter-spacing:.05em;margin-bottom:3px}
+.fval{font-size:15px;font-weight:900;font-family:monospace}.fdet{font-size:8.5px;color:#94a3b8;margin-top:2px}
+.st{font-size:10.5px;font-weight:900;color:#0f172a;text-transform:uppercase;letter-spacing:.07em;margin:18px 0 7px;padding-bottom:3px;border-bottom:2px solid #0f172a}
+.aviso{background:#fef9c3;border:1px solid #fde68a;border-radius:6px;padding:7px 11px;font-size:8.5px;color:#92400e;margin-bottom:14px}
+.footer{margin-top:24px;padding:9px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;font-size:8px;color:#94a3b8;line-height:1.5;text-align:center}`;
+  return `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8">
+<title>Informe Gestoría — ${pLabel}</title><style>${css}</style></head><body>
+<div class="hdr"><div><h1>Informe Contable para Gestoría</h1>
+<p>${empresaNombre||"Autónomo"}${empresaNif?" · NIF: "+empresaNif:""}</p>
+<p>Período: ${pLabel} · Generado: ${now}</p></div><span class="badge">Declaración AEAT</span></div>
+<div class="aviso">Documento orientativo para facilitar la declaración. El asesor fiscal es responsable de la presentación oficial.</div>
+<div class="kpis">
+  <div class="kpi"><div class="kpi-lbl">Ingresos (base)</div><div class="kpi-val g">+${fmtN(totales.ventasBase)} €</div></div>
+  <div class="kpi"><div class="kpi-lbl">Gastos deducibles</div><div class="kpi-val r">-${fmtN(totales.gastosBase+totales.nominasCoste)} €</div></div>
+  <div class="kpi"><div class="kpi-lbl">Resultado neto</div><div class="kpi-val ${totales.beneficioBruto>=0?"g":"r"}">${totales.beneficioBruto>=0?"+":""}${fmtN(totales.beneficioBruto)} €</div></div>
+  <div class="kpi"><div class="kpi-lbl">IVA neto (Mod.303)</div><div class="kpi-val b">${fmtN(totales.ivaLiquidar)} €</div></div>
+</div>
+<div class="st">Estimación modelos AEAT — ${pLabel}</div>
+<div class="fiscal">
+  <div class="fbox"><div class="fmod">Mod. 303 — IVA trimestral</div>
+    <div class="fval" style="color:${totales.ivaLiquidar>=0?"#dc2626":"#15803d"}">${fmtN(Math.abs(totales.ivaLiquidar))} €</div>
+    <div class="fdet">Rep. ${fmtN(totales.ventasIVA+(totales.ventasRecargo||0))} € - Sop. ${fmtN(totales.gastosIVA+(totales.gastosRecargo||0))} €${totales.ivaLiquidar<0?" → A devolver":""}</div>
+  </div>
+  <div class="fbox"><div class="fmod">Mod. 130 — IRPF fraccionado</div>
+    <div class="fval" style="color:#b45309">${fmtN(totales.irpfFraccionado)} €</div>
+    <div class="fdet">20% × ${fmtN(Math.max(0,totales.beneficioBruto))} € - Retenciones ${fmtN(totales.ventasRetencion)} €</div>
+  </div>
+  <div class="fbox"><div class="fmod">Mod. 111 — Retenciones</div>
+    <div class="fval" style="color:#7e22ce">${fmtN(irpf111Nom)} €</div>
+    <div class="fdet">IRPF nóminas + profesionales externos<br>SS total TGSS: ${fmtN((totales.nominasSSTrab||0)+(totales.nominasSSEmp||0))} €</div>
+  </div>
+</div>
+<div class="st">Desglose por actividad económica</div>
+<table><thead><tr><th style="width:21%">Actividad</th><th style="width:31%">Concepto</th><th style="width:30%;text-align:right">Importe</th><th style="width:18%;text-align:right">Detalle</th></tr></thead>
+<tbody>${actividades.map(d=>filaAct(d)).join("")}
+<tr class="total-row"><td>TOTALES</td><td>Resultado consolidado ${pLabel}</td>
+  <td class="num">${totales.beneficioBruto>=0?"+":""}${fmtN(totales.beneficioBruto)} €</td>
+  <td class="num" style="font-size:9.5px">${totales.nVentas} vtas / ${totales.nGastos} gtos</td></tr>
+</tbody></table>
+<div class="st">Libro de IVA — Resumen</div>
+<table><thead><tr><th>Concepto</th><th>Base imponible</th><th>Cuota IVA</th><th>Rec. equiv.</th><th>Retención IRPF</th><th>Total</th></tr></thead>
+<tbody>
+<tr><td>IVA Repercutido (Ventas)</td>
+  <td class="num green">${fmtN(totales.ventasBase)} €</td>
+  <td class="num green">+${fmtN(totales.ventasIVA)} €</td>
+  <td class="num">${(totales.ventasRecargo||0)>0?"+"+fmtN(totales.ventasRecargo)+" €":"—"}</td>
+  <td class="num red">${totales.ventasRetencion>0?"-"+fmtN(totales.ventasRetencion)+" €":"—"}</td>
+  <td class="num green">${fmtN(totales.ventasBase+totales.ventasIVA+(totales.ventasRecargo||0)-totales.ventasRetencion)} €</td>
+</tr>
+<tr><td>IVA Soportado (Gastos)</td>
+  <td class="num red">${fmtN(totales.gastosBase)} €</td>
+  <td class="num red">-${fmtN(totales.gastosIVA)} €</td>
+  <td class="num">${(totales.gastosRecargo||0)>0?"-"+fmtN(totales.gastosRecargo)+" €":"—"}</td>
+  <td class="num">—</td>
+  <td class="num red">-${fmtN(totales.gastosBase+totales.gastosIVA+(totales.gastosRecargo||0))} €</td>
+</tr>
+<tr class="total-row"><td>DIFERENCIA — Mod. 303</td>
+  <td class="num">${fmtN(totales.ventasBase-totales.gastosBase)} €</td>
+  <td class="num">${fmtN(totales.ventasIVA-totales.gastosIVA)} €</td>
+  <td class="num">${fmtN((totales.ventasRecargo||0)-(totales.gastosRecargo||0))} €</td>
+  <td class="num">—</td>
+  <td class="num" style="font-size:13px;color:${totales.ivaLiquidar>=0?"#fbbf24":"#34d399"}">${fmtN(totales.ivaLiquidar)} €</td>
+</tr>
+</tbody></table>
+${totales.nominasBruto>0?`<div class="st">Costes laborales</div>
+<table><thead><tr><th>Concepto</th><th>Bruto</th><th>SS trab.</th><th>IRPF retenido</th><th>Neto</th><th>SS empresa</th><th>Coste total</th></tr></thead>
+<tbody><tr>
+  <td>Nóminas período (${totales.nNominas} nóm.)</td>
+  <td class="num">${fmtN(totales.nominasBruto)} €</td>
+  <td class="num">${fmtN(totales.nominasSSTrab||0)} €</td>
+  <td class="num">${fmtN(irpf111Nom)} €</td>
+  <td class="num">${fmtN(totales.nominasNeto||0)} €</td>
+  <td class="num">${fmtN(totales.nominasSSEmp||0)} €</td>
+  <td class="num">${fmtN(totales.nominasCoste)} €</td>
+</tr></tbody></table>`:""}
+<div class="footer">ContaAuto · Informe orientativo para gestoría · ${now} · No sustituye asesoramiento fiscal profesional ·
+Pago fraccionado IRPF calculado según art. 110.3 RIRPF (20% rendimiento neto - retenciones soportadas).</div>
+</body></html>`;
+}
+
+
+// ════════════════════════════════════════════════════════════
+// VISTA INFORME GESTORÍA
+// ════════════════════════════════════════════════════════════
+
+function VistaInformeGestoria({ facturas, nominas, actividades }) {
+  const [mode,  setMode]  = React.useState("trimestre");
+  const [value, setValue] = React.useState(Math.floor(new Date().getMonth() / 3));
+  const [year,  setYear]  = React.useState(new Date().getFullYear());
+  const [tab,   setTab]   = React.useState("resumen");
+  const [expandidas, setExpandidas] = React.useState({});
+
+  const empDef = React.useMemo(() => getEmpresaDefaults(), []);
+
+  const availYears = React.useMemo(() => {
+    const s = new Set([new Date().getFullYear(), ...facturas.map(f => new Date(f.fecha).getFullYear()), ...nominas.map(n => new Date(n.fecha).getFullYear())]);
+    return [...s].sort((a,b) => b-a);
+  }, [facturas, nominas]);
+
+  const pLabel = getPeriodLabel(mode, value, year);
+  const data = React.useMemo(() => calcInformeActividades(facturas, nominas, mode, value, year), [facturas, nominas, mode, value, year]);
+  const { actividades: acts, totales } = data;
+
+  const irpf111Nom = React.useMemo(() =>
+    nominas.filter(n => matchesPeriod(n, mode, value, year)).reduce((s, n) => s + (calcNomina(n).irpfAmt || 0), 0),
+    [nominas, mode, value, year]
+  );
+
+  const handlePrint = () => {
+    const html = buildInformeGestoriaHTML(data, pLabel, empDef.nombre, empDef.nif, irpf111Nom);
+    openPrint(html);
+  };
+  const handlePDF = () => {
+    const html = buildInformeGestoriaHTML(data, pLabel, empDef.nombre, empDef.nif, irpf111Nom);
+    downloadPDF(html, "informe-gestoria-" + pLabel.replace(/ /g,"-").toLowerCase() + ".pdf");
+  };
+  const toggle = (act) => setExpandidas(p => ({...p, [act]: !p[act]}));
+  const colorB = (v) => v >= 0 ? "text-emerald-700" : "text-rose-600";
+
+  return (
+    <div className="space-y-6 max-w-6xl mx-auto">
+      {/* Cabecera */}
+      <div className="bg-gradient-to-br from-slate-900 to-slate-700 rounded-2xl p-6 text-white">
+        <div className="flex items-start justify-between gap-4 flex-wrap mb-4">
+          <div>
+            <div className="flex items-center gap-2 mb-1">
+              <span className="bg-blue-500 text-white text-xs font-black px-2.5 py-1 rounded-lg uppercase tracking-wide">Gestoría</span>
+              <span className="text-xs text-white/50">Informe para declaración AEAT</span>
+            </div>
+            <h2 className="text-xl font-black">Resultados por Actividad — {pLabel}</h2>
+            <p className="text-sm text-white/50 mt-0.5">{empDef.nombre || "Autónomo"}{empDef.nif ? " · NIF: " + empDef.nif : ""}</p>
+          </div>
+          <div className="flex gap-2 flex-shrink-0 flex-wrap">
+            <button onClick={handlePrint} className="flex items-center gap-2 px-4 py-2.5 bg-white/10 hover:bg-white/20 border border-white/20 rounded-xl text-xs font-bold transition-colors">{Ico.print} Imprimir</button>
+            <button onClick={handlePDF} className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 rounded-xl text-xs font-bold transition-colors shadow-lg">{Ico.pdf} PDF Gestoría</button>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          {[
+            { l:"Ingresos (base)", v:fmt(totales.ventasBase), c:"text-emerald-300" },
+            { l:"Gastos deducibles", v:"-"+fmt(totales.gastosBase+totales.nominasCoste), c:"text-rose-300" },
+            { l:"Resultado neto", v:(totales.beneficioBruto>=0?"+":"")+fmt(totales.beneficioBruto), c:totales.beneficioBruto>=0?"text-emerald-300":"text-rose-300" },
+            { l:"IVA a liquidar (303)", v:fmt(totales.ivaLiquidar), c:"text-sky-300" },
+          ].map(({l,v,c}) => (
+            <div key={l} className="bg-white/5 border border-white/10 rounded-xl px-4 py-3">
+              <div className="text-xs text-white/40 mb-0.5">{l}</div>
+              <div className={`font-mono font-black text-sm ${c}`}>{v}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Selector período */}
+      <div className="bg-white border border-gray-200 rounded-xl px-5 py-3 flex flex-wrap items-center gap-3 shadow-sm">
+        <div className="flex bg-gray-100 rounded-xl p-0.5">
+          {[["mes","Mes"],["trimestre","Trimestre"],["año","Año"]].map(([m,l]) => (
+            <button key={m} onClick={() => { setMode(m); setValue(m==="mes"?new Date().getMonth():m==="trimestre"?Math.floor(new Date().getMonth()/3):0); }}
+              className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition-all ${mode===m?"bg-white text-slate-900 shadow-sm":"text-gray-400 hover:text-gray-700"}`}>{l}</button>
+          ))}
+        </div>
+        <div className="flex gap-1 flex-wrap">
+          {availYears.map(y => (
+            <button key={y} onClick={() => setYear(y)}
+              className={`px-3 py-1.5 rounded-lg text-sm font-semibold border transition-all ${year===y?"bg-slate-900 text-white border-slate-900":"border-gray-200 text-gray-500 hover:border-slate-400"}`}>{y}</button>
+          ))}
+        </div>
+        {mode==="mes" && (
+          <div className="flex flex-wrap gap-1">
+            {["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"].map((m,i) => (
+              <button key={i} onClick={() => setValue(i)}
+                className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${value===i?"bg-sky-600 text-white":"bg-gray-100 text-gray-500 hover:bg-gray-200"}`}>{m}</button>
+            ))}
+          </div>
+        )}
+        {mode==="trimestre" && (
+          <div className="flex gap-1">
+            {["1T","2T","3T","4T"].map((q,i) => (
+              <button key={i} onClick={() => setValue(i)}
+                className={`px-4 py-1.5 rounded-lg text-sm font-bold transition-all ${value===i?"bg-sky-600 text-white":"bg-gray-100 text-gray-500 hover:bg-gray-200"}`}>{q}</button>
+            ))}
+          </div>
+        )}
+        <div className="ml-auto"><span className="text-sm font-bold bg-slate-100 text-slate-700 px-3 py-1.5 rounded-lg">{pLabel}</span></div>
+      </div>
+
+      {/* Tabs */}
+      <div className="flex gap-1 bg-slate-100 p-1 rounded-xl">
+        {[["resumen","Por actividad"],["fiscal","Resumen fiscal (303/130/111)"],["laboral","Costes laborales"]].map(([id,lbl]) => (
+          <button key={id} onClick={() => setTab(id)}
+            className={`flex-1 py-2.5 text-sm font-bold rounded-lg transition-all ${tab===id?"bg-white text-slate-900 shadow-sm":"text-slate-500 hover:text-slate-700"}`}>{lbl}</button>
+        ))}
+      </div>
+
+      {/* TAB: por actividad */}
+      {tab === "resumen" && (
+        <div className="space-y-3">
+          {acts.length === 0 ? (
+            <div className="text-center py-16 bg-white border border-gray-100 rounded-2xl"><div className="text-4xl mb-2">📊</div><div className="text-sm font-semibold text-gray-400">Sin datos en {pLabel}</div></div>
+          ) : acts.map(d => (
+            <div key={d.actividad} className="bg-white border border-gray-200 rounded-2xl overflow-hidden shadow-sm">
+              <button className="w-full flex items-center justify-between px-6 py-4 hover:bg-slate-50 transition-colors" onClick={() => toggle(d.actividad)}>
+                <div className="flex items-center gap-4">
+                  <div className="w-1 h-10 rounded-full bg-blue-500"/>
+                  <div className="text-left">
+                    <div className="font-black text-gray-900 text-base">{d.actividad}</div>
+                    <div className="text-xs text-gray-400 mt-0.5">
+                      {d.nVentas} venta{d.nVentas!==1?"s":""} · {d.nGastos} gasto{d.nGastos!==1?"s":""}
+                      {d.nNominas>0 ? " · "+d.nNominas+" nómina"+(d.nNominas!==1?"s":"") : ""}
+                      {d.nTienda>0 ? " · Tienda" : ""}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-5 text-right">
+                  <div><div className="text-xs text-gray-400">Ingresos</div><div className="font-bold font-mono text-emerald-700">+{fmt(d.ventasBase)}</div></div>
+                  <div><div className="text-xs text-gray-400">Gastos</div><div className="font-bold font-mono text-rose-600">-{fmt(d.gastosBase+d.nominasCoste)}</div></div>
+                  <div className="min-w-28"><div className="text-xs text-gray-400">Resultado neto</div><div className={`font-black font-mono text-lg ${colorB(d.beneficioBruto)}`}>{d.beneficioBruto>=0?"+":""}{fmt(d.beneficioBruto)}</div></div>
+                  <div className="text-gray-400 text-lg">{expandidas[d.actividad]?"▲":"▼"}</div>
+                </div>
+              </button>
+              {expandidas[d.actividad] && (
+                <div className="border-t border-gray-100">
+                  <div className="grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-gray-100">
+                    {/* Ingresos */}
+                    <div className="p-5 bg-emerald-50/40">
+                      <div className="text-xs font-black text-emerald-700 uppercase tracking-widest mb-3">Ingresos</div>
+                      <div className="space-y-2 text-sm">
+                        <div className="flex justify-between"><span className="text-gray-600">Base imponible</span><span className="font-mono font-bold text-emerald-700">+{fmt(d.ventasBase)}</span></div>
+                        <div className="flex justify-between"><span className="text-gray-600">IVA repercutido</span><span className="font-mono text-sky-600">+{fmt(d.ventasIVA)}</span></div>
+                        {(d.ventasRecargo||0)>0 && <div className="flex justify-between"><span className="text-gray-600">Rec. equivalencia</span><span className="font-mono text-amber-600">+{fmt(d.ventasRecargo)}</span></div>}
+                        {d.ventasRetencion>0 && <div className="flex justify-between"><span className="text-gray-600">Retención IRPF</span><span className="font-mono text-orange-600">-{fmt(d.ventasRetencion)}</span></div>}
+                        <div className="flex justify-between border-t border-emerald-200 pt-2 font-bold"><span>Total cobrado</span><span className="font-mono text-emerald-700">+{fmt(d.ventasTotal-d.ventasRetencion)}</span></div>
+                        {d.nTienda>0 && (
+                          <div className="mt-2 bg-violet-50 border border-violet-200 rounded-lg p-3 text-xs space-y-1">
+                            <div className="font-bold text-violet-700 mb-1">Tienda ({d.nTienda} reg.)</div>
+                            <div className="flex justify-between"><span>Subtotal</span><span className="font-mono">{fmt(d.tiendaSubtotal)}</span></div>
+                            <div className="flex justify-between"><span>Impuesto</span><span className="font-mono">+{fmt(d.tiendaImpuesto)}</span></div>
+                            <div className="flex justify-between"><span>Coste mercancía</span><span className="font-mono text-rose-600">-{fmt(d.tiendaCoste)}</span></div>
+                            <div className="flex justify-between font-bold border-t border-violet-200 pt-1"><span>Beneficio</span><span className={`font-mono ${colorB(d.tiendaBeneficio)}`}>{d.tiendaBeneficio>=0?"+":""}{fmt(d.tiendaBeneficio)}</span></div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    {/* Gastos */}
+                    <div className="p-5 bg-rose-50/30">
+                      <div className="text-xs font-black text-rose-700 uppercase tracking-widest mb-3">Gastos deducibles</div>
+                      <div className="space-y-2 text-sm">
+                        <div className="flex justify-between"><span className="text-gray-600">Base imponible</span><span className="font-mono font-bold text-rose-600">-{fmt(d.gastosBase)}</span></div>
+                        <div className="flex justify-between"><span className="text-gray-600">IVA soportado</span><span className="font-mono text-sky-600">-{fmt(d.gastosIVA)}</span></div>
+                        {(d.gastosRecargo||0)>0 && <div className="flex justify-between"><span className="text-gray-600">Rec. equivalencia</span><span className="font-mono text-amber-600">-{fmt(d.gastosRecargo)}</span></div>}
+                        {d.nominasCoste>0 && <div className="flex justify-between"><span className="text-gray-600">Coste laboral</span><span className="font-mono text-rose-600">-{fmt(d.nominasCoste)}</span></div>}
+                        <div className="flex justify-between border-t border-rose-200 pt-2 font-bold"><span>Total gastos</span><span className="font-mono text-rose-600">-{fmt(d.gastosBase+d.nominasCoste)}</span></div>
+                      </div>
+                    </div>
+                    {/* Resultado */}
+                    <div className="p-5 bg-slate-50">
+                      <div className="text-xs font-black text-slate-600 uppercase tracking-widest mb-3">Resultado fiscal</div>
+                      <div className="space-y-2 text-sm">
+                        <div className="flex justify-between"><span className="text-gray-600">Rendimiento neto</span><span className={`font-mono font-bold ${colorB(d.beneficioBruto)}`}>{d.beneficioBruto>=0?"+":""}{fmt(d.beneficioBruto)}</span></div>
+                        <div className="flex justify-between"><span className="text-gray-600">IVA neto (Mod. 303)</span><span className={`font-mono ${d.ivaLiquidar>=0?"text-rose-600":"text-emerald-600"}`}>{fmt(d.ivaLiquidar)}</span></div>
+                        <div className="flex justify-between"><span className="text-gray-600">IRPF frac. (Mod. 130)</span><span className="font-mono text-amber-700">{fmt(d.irpfFraccionado)}</span></div>
+                        <div className="flex justify-between border-t border-slate-200 pt-2 font-black text-base">
+                          <span className="text-slate-800">Resultado</span>
+                          <span className={`font-mono ${colorB(d.beneficioBruto)}`}>{d.beneficioBruto>=0?"+":""}{fmt(d.beneficioBruto)}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+          {acts.length > 0 && (
+            <div className="bg-slate-900 text-white rounded-2xl p-6">
+              <div className="text-xs font-black uppercase tracking-widest text-slate-400 mb-4">Totales — {pLabel}</div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                {[
+                  { l:"Ingresos (base)", v:"+"+fmt(totales.ventasBase), c:"text-emerald-400" },
+                  { l:"Gastos deducibles", v:"-"+fmt(totales.gastosBase+totales.nominasCoste), c:"text-rose-400" },
+                  { l:"Resultado neto", v:(totales.beneficioBruto>=0?"+":"")+fmt(totales.beneficioBruto), c:totales.beneficioBruto>=0?"text-emerald-300":"text-rose-300" },
+                  { l:"IVA a ingresar", v:fmt(totales.ivaLiquidar), c:"text-sky-300" },
+                ].map(({l,v,c}) => (
+                  <div key={l}><div className="text-xs text-slate-400 mb-0.5">{l}</div><div className={`font-black font-mono text-xl ${c}`}>{v}</div></div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* TAB: Fiscal */}
+      {tab === "fiscal" && (
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="bg-amber-50 border border-amber-200 rounded-2xl p-5">
+              <div className="flex items-center gap-2 mb-3"><span className="bg-amber-600 text-white text-xs font-black px-2 py-0.5 rounded">MOD. 303</span><span className="text-sm font-bold text-amber-900">IVA</span></div>
+              <div className="space-y-2 text-sm">
+                <div className="flex justify-between"><span className="text-gray-600">Base repercutida</span><span className="font-mono">{fmt(totales.ventasBase)}</span></div>
+                <div className="flex justify-between"><span className="text-gray-600">IVA repercutido</span><span className="font-mono text-emerald-700">+{fmt(totales.ventasIVA)}</span></div>
+                {(totales.ventasRecargo||0)>0&&<div className="flex justify-between"><span className="text-gray-600">Rec. equiv. ventas</span><span className="font-mono text-amber-700">+{fmt(totales.ventasRecargo)}</span></div>}
+                <div className="flex justify-between"><span className="text-gray-600">IVA soportado</span><span className="font-mono text-rose-600">-{fmt(totales.gastosIVA)}</span></div>
+                {(totales.gastosRecargo||0)>0&&<div className="flex justify-between"><span className="text-gray-600">Rec. equiv. gastos</span><span className="font-mono text-amber-700">-{fmt(totales.gastosRecargo)}</span></div>}
+                <div className="flex justify-between font-black text-base border-t border-amber-300 pt-2 text-amber-900">
+                  <span>{totales.ivaLiquidar>=0?"A INGRESAR":"A DEVOLVER"}</span><span className="font-mono">{fmt(Math.abs(totales.ivaLiquidar))}</span>
+                </div>
+              </div>
+            </div>
+            <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-5">
+              <div className="flex items-center gap-2 mb-3"><span className="bg-indigo-600 text-white text-xs font-black px-2 py-0.5 rounded">MOD. 130</span><span className="text-sm font-bold text-indigo-900">IRPF</span></div>
+              <div className="space-y-2 text-sm">
+                <div className="flex justify-between"><span className="text-gray-600">Ingresos</span><span className="font-mono">{fmt(totales.ventasBase)}</span></div>
+                <div className="flex justify-between"><span className="text-gray-600">Gastos deducibles</span><span className="font-mono">-{fmt(totales.gastosBase+totales.nominasCoste)}</span></div>
+                <div className="flex justify-between font-semibold"><span className="text-gray-700">Rendimiento neto</span><span className={`font-mono ${colorB(totales.beneficioBruto)}`}>{fmt(totales.beneficioBruto)}</span></div>
+                <div className="flex justify-between"><span className="text-gray-600">× 20%</span><span className="font-mono">{fmt(Math.max(0,totales.beneficioBruto)*0.20)}</span></div>
+                {totales.ventasRetencion>0&&<div className="flex justify-between"><span className="text-gray-600">- Retenciones</span><span className="font-mono text-rose-600">-{fmt(totales.ventasRetencion)}</span></div>}
+                <div className="flex justify-between font-black text-base border-t border-indigo-300 pt-2 text-indigo-900"><span>PAGO FRACCIONADO</span><span className="font-mono">{fmt(totales.irpfFraccionado)}</span></div>
+              </div>
+            </div>
+            <div className="bg-violet-50 border border-violet-200 rounded-2xl p-5">
+              <div className="flex items-center gap-2 mb-3"><span className="bg-violet-600 text-white text-xs font-black px-2 py-0.5 rounded">MOD. 111</span><span className="text-sm font-bold text-violet-900">Retenciones</span></div>
+              <div className="space-y-2 text-sm">
+                <div className="flex justify-between"><span className="text-gray-600">IRPF nóminas</span><span className="font-mono">{fmt(irpf111Nom)}</span></div>
+                <div className="flex justify-between"><span className="text-gray-600">IRPF profesionales ext.</span><span className="font-mono">{fmt(totales.gastosRetencion||0)}</span></div>
+                <div className="flex justify-between font-black text-base border-t border-violet-300 pt-2 text-violet-900"><span>A INGRESAR</span><span className="font-mono">{fmt(irpf111Nom+(totales.gastosRetencion||0))}</span></div>
+              </div>
+              <div className="mt-3 text-xs text-violet-600 bg-violet-100 rounded-lg p-2.5">SS total TGSS: {fmt((totales.nominasSSTrab||0)+(totales.nominasSSEmp||0))}</div>
+            </div>
+          </div>
+          {/* Libro IVA */}
+          <div className="bg-white border border-gray-200 rounded-2xl overflow-hidden shadow-sm">
+            <div className="px-5 py-3 border-b border-gray-100 font-black text-sm text-gray-800">Libro de IVA — {pLabel}</div>
+            <table className="w-full text-sm">
+              <thead className="bg-slate-900">
+                <tr>{["Concepto","Base imponible","Cuota IVA","Rec. equiv.","Retención IRPF","Total"].map((h,i) => (
+                  <th key={i} className={`py-2.5 px-4 text-xs font-semibold text-slate-300 uppercase tracking-wide ${i===0?"text-left":"text-right"}`}>{h}</th>
+                ))}</tr>
+              </thead>
+              <tbody>
+                <tr className="border-b border-gray-100 bg-emerald-50/30">
+                  <td className="py-2.5 px-4 font-semibold text-emerald-800">IVA Repercutido (Ventas)</td>
+                  <td className="py-2.5 px-4 text-right font-mono text-emerald-700">{fmt(totales.ventasBase)}</td>
+                  <td className="py-2.5 px-4 text-right font-mono text-emerald-700">+{fmt(totales.ventasIVA)}</td>
+                  <td className="py-2.5 px-4 text-right font-mono text-amber-700">{(totales.ventasRecargo||0)>0?"+"+fmt(totales.ventasRecargo):"—"}</td>
+                  <td className="py-2.5 px-4 text-right font-mono text-orange-600">{totales.ventasRetencion>0?"-"+fmt(totales.ventasRetencion):"—"}</td>
+                  <td className="py-2.5 px-4 text-right font-mono font-bold text-emerald-800">{fmt(totales.ventasBase+totales.ventasIVA+(totales.ventasRecargo||0)-totales.ventasRetencion)}</td>
+                </tr>
+                <tr className="border-b border-gray-100 bg-rose-50/30">
+                  <td className="py-2.5 px-4 font-semibold text-rose-800">IVA Soportado (Gastos)</td>
+                  <td className="py-2.5 px-4 text-right font-mono text-rose-600">{fmt(totales.gastosBase)}</td>
+                  <td className="py-2.5 px-4 text-right font-mono text-rose-600">-{fmt(totales.gastosIVA)}</td>
+                  <td className="py-2.5 px-4 text-right font-mono text-amber-700">{(totales.gastosRecargo||0)>0?"-"+fmt(totales.gastosRecargo):"—"}</td>
+                  <td className="py-2.5 px-4 text-right font-mono text-gray-400">—</td>
+                  <td className="py-2.5 px-4 text-right font-mono font-bold text-rose-700">-{fmt(totales.gastosBase+totales.gastosIVA+(totales.gastosRecargo||0))}</td>
+                </tr>
+                <tr className="bg-slate-900 text-white">
+                  <td className="py-2.5 px-4 font-black">DIFERENCIA — Mod. 303</td>
+                  <td className="py-2.5 px-4 text-right font-mono">{fmt(totales.ventasBase-totales.gastosBase)}</td>
+                  <td className="py-2.5 px-4 text-right font-mono">{fmt(totales.ventasIVA-totales.gastosIVA)}</td>
+                  <td className="py-2.5 px-4 text-right font-mono">{fmt((totales.ventasRecargo||0)-(totales.gastosRecargo||0))}</td>
+                  <td className="py-2.5 px-4 text-right font-mono">—</td>
+                  <td className={`py-2.5 px-4 text-right font-mono font-black text-lg ${totales.ivaLiquidar>=0?"text-amber-400":"text-emerald-400"}`}>{fmt(totales.ivaLiquidar)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* TAB: Laboral */}
+      {tab === "laboral" && (
+        <div className="space-y-4">
+          {totales.nominasBruto === 0 ? (
+            <div className="text-center py-16 bg-white border border-gray-100 rounded-2xl"><div className="text-4xl mb-2">👥</div><div className="text-sm font-semibold text-gray-400">Sin nóminas en {pLabel}</div></div>
+          ) : (
+            <>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                {[
+                  { l:"Bruto total", v:fmt(totales.nominasBruto), c:"text-violet-700" },
+                  { l:"IRPF retenido (Mod.111)", v:fmt(irpf111Nom), c:"text-orange-600" },
+                  { l:"SS empresa (TGSS)", v:fmt(totales.nominasSSEmp), c:"text-amber-700" },
+                  { l:"Coste total empresa", v:fmt(totales.nominasCoste), c:"text-slate-900" },
+                ].map(({l,v,c}) => (
+                  <div key={l} className="bg-white border border-gray-200 rounded-xl p-4">
+                    <div className="text-xs text-gray-400 mb-1">{l}</div>
+                    <div className={`font-black font-mono text-lg ${c}`}>{v}</div>
+                  </div>
+                ))}
+              </div>
+              <div className="bg-white border border-gray-200 rounded-2xl p-5">
+                <div className="text-xs font-black text-gray-500 uppercase tracking-widest mb-3">Desglose para Mod. 111 y TC</div>
+                <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div className="space-y-2">
+                    <div className="flex justify-between"><span className="text-gray-600">Salario bruto</span><span className="font-mono font-bold">{fmt(totales.nominasBruto)}</span></div>
+                    <div className="flex justify-between"><span className="text-gray-600">SS trabajador</span><span className="font-mono text-rose-600">-{fmt(totales.nominasSSTrab||0)}</span></div>
+                    <div className="flex justify-between"><span className="text-gray-600">IRPF retenido</span><span className="font-mono text-orange-600">-{fmt(irpf111Nom)}</span></div>
+                    <div className="flex justify-between font-bold border-t border-gray-200 pt-2"><span>Líquido a trabajadores</span><span className="font-mono text-violet-700">{fmt(totales.nominasNeto||0)}</span></div>
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex justify-between"><span className="text-gray-600">SS empresa</span><span className="font-mono font-bold">{fmt(totales.nominasSSEmp||0)}</span></div>
+                    <div className="flex justify-between"><span className="text-gray-600">SS total (trab.+emp.)</span><span className="font-mono text-amber-700">{fmt((totales.nominasSSTrab||0)+(totales.nominasSSEmp||0))}</span></div>
+                    <div className="flex justify-between font-bold border-t border-gray-200 pt-2"><span>Coste total empresa</span><span className="font-mono text-slate-900">{fmt(totales.nominasCoste)}</span></div>
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 const MESES_ES = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
 
@@ -4899,6 +5516,7 @@ const NAV_SIDEBAR = [
   { id:"tesoreria",    label:"Tesoreria",        group:"finanzas",  iconId:"bank" },
   { id:"modelos",      label:"Mod. Hacienda",    group:"finanzas",  iconId:"hacienda" },
   { id:"actividades",  label:"Actividades",      group:"fiscal",    iconId:"briefcase" },
+  { id:"gestoria",     label:"Informe Gestoría",  group:"fiscal",    iconId:"chart" },
   { id:"mod347",       label:"Mod. 347",         group:"fiscal",    iconId:"chart" },
   { id:"contactos",    label:"Directorio",       group:"otros",     iconId:"contacts" },
   { id:"extracto",     label:"Asesor IA",        group:"otros",     iconId:"bolt" },
@@ -5176,14 +5794,59 @@ function VistaModelos({ facturas, nominas, periodYear }) {
 
   // === MOD 303 - IVA ===
   const calcMod303 = () => {
-    let ivaRepercutido = 0, ivaDeducible = 0, baseRep = 0, baseDed = 0;
+    const repMap = {};
+    const sopMap = {};
     factsTrim.forEach(f => {
-      const calc = calcFacturaReal(f);
-      if (f.tipo === "venta") { ivaRepercutido += calc.totalIVA; baseRep += calc.totalBase; }
-      else { ivaDeducible += calc.totalIVA; baseDed += calc.totalBase; }
+      const recargoGlobal = f.aplicarRecargo || f.aplicar_recargo || false;
+      const esTienda = (f.tipoDoc || f.tipo_doc) === "venta_tienda";
+      if (esTienda) {
+        const t = calcFacturaReal(f);
+        const key = "tienda";
+        if (!repMap[key]) repMap[key] = { base:0, cuota:0, recargo:0, recargoPct:0, label:"Tienda (imp. manual)", exento:false, conRecargo:false };
+        repMap[key].base += t.totalBase;
+        repMap[key].cuota += t.totalIVA;
+        return;
+      }
+      (f.lineas || []).forEach(l => {
+        const tipoIVA = parseInt(l.tipoIVA || l.iva || 0);
+        const c = calcLinea(l, recargoGlobal);
+        const conRec = !l.exento && (l.aplicarRecargo || recargoGlobal);
+        const key = l.exento ? "exento" : String(tipoIVA);
+        if (f.tipo === "venta") {
+          if (!repMap[key]) repMap[key] = { base:0, cuota:0, recargo:0, recargoPct:RECARGO_MAP[tipoIVA]||0, tipoIVA, exento:!!l.exento, conRecargo:false };
+          repMap[key].base += c.baseConDesc;
+          repMap[key].cuota += c.ivaAmt;
+          repMap[key].recargo += c.recargoAmt;
+          if (conRec) repMap[key].conRecargo = true;
+        } else {
+          if (!sopMap[key]) sopMap[key] = { base:0, cuota:0, recargo:0, recargoPct:RECARGO_MAP[tipoIVA]||0, tipoIVA, exento:!!l.exento, conRecargo:false };
+          sopMap[key].base += c.baseConDesc;
+          sopMap[key].cuota += c.ivaAmt;
+          sopMap[key].recargo += c.recargoAmt;
+          if (conRec) sopMap[key].conRecargo = true;
+        }
+      });
     });
-    const resultado = ivaRepercutido - ivaDeducible;
-    return { baseRep, ivaRepercutido, baseDed, ivaDeducible, resultado };
+    const sortEntries = (map) => Object.entries(map).sort((a,b) => {
+      if (a[0]==="exento") return 1; if (b[0]==="exento") return -1;
+      if (a[0]==="tienda") return 1; if (b[0]==="tienda") return 1;
+      return parseInt(b[0]) - parseInt(a[0]);
+    });
+    const totalRepBase    = Object.values(repMap).reduce((s,v)=>s+v.base,0);
+    const totalRepCuota   = Object.values(repMap).reduce((s,v)=>s+v.cuota,0);
+    const totalRepRecargo = Object.values(repMap).reduce((s,v)=>s+(v.recargo||0),0);
+    const totalSopBase    = Object.values(sopMap).reduce((s,v)=>s+v.base,0);
+    const totalSopCuota   = Object.values(sopMap).reduce((s,v)=>s+v.cuota,0);
+    const totalSopRecargo = Object.values(sopMap).reduce((s,v)=>s+(v.recargo||0),0);
+    const resultado = totalRepCuota + totalRepRecargo - totalSopCuota - totalSopRecargo;
+    return {
+      repMap, sopMap, sortEntries,
+      baseRep:totalRepBase, ivaRepercutido:totalRepCuota,
+      baseDed:totalSopBase, ivaDeducible:totalSopCuota,
+      totalRepBase, totalRepCuota, totalRepRecargo,
+      totalSopBase, totalSopCuota, totalSopRecargo,
+      resultado,
+    };
   };
 
   // === MOD 130 - IRPF Estimacion Directa ===
@@ -5300,14 +5963,84 @@ function VistaModelos({ facturas, nominas, periodYear }) {
             </button>
           </div>
           <table className="w-full">
+            <colgroup>
+              <col style={{width:"34%"}}/><col style={{width:"17%"}}/><col style={{width:"17%"}}/><col style={{width:"15%"}}/><col style={{width:"17%"}}/>
+            </colgroup>
             <tbody>
-              <tr className="bg-emerald-50 border-b border-slate-100"><td colSpan={2} className="px-4 py-2 text-xs font-semibold text-emerald-800 uppercase tracking-wide">IVA Repercutido (Ventas)</td></tr>
-              <Fila label="Base imponible" val={m303.baseRep}/>
-              <Fila label="Cuota IVA repercutida" val={m303.ivaRepercutido} bold/>
-              <tr className="bg-rose-50 border-b border-slate-100"><td colSpan={2} className="px-4 py-2 text-xs font-semibold text-rose-800 uppercase tracking-wide">IVA Soportado Deducible (Compras)</td></tr>
-              <Fila label="Base imponible" val={m303.baseDed}/>
-              <Fila label="Cuota IVA soportado" val={m303.ivaDeducible} bold/>
-              <Fila label={m303.resultado >= 0 ? "RESULTADO A INGRESAR" : "RESULTADO A DEVOLVER"} val={Math.abs(m303.resultado)} bold sep color={m303.resultado>=0?"text-rose-700":"text-emerald-700"}/>
+              {/* IVA Repercutido (Ventas) */}
+              <tr className="bg-emerald-50 border-b border-slate-200">
+                <td className="px-4 py-2 text-xs font-bold text-emerald-800 uppercase tracking-wide">IVA Repercutido — Ventas</td>
+                <td className="px-4 py-2 text-xs font-bold text-emerald-800 uppercase tracking-wide text-right">Base imponible</td>
+                <td className="px-4 py-2 text-xs font-bold text-emerald-800 uppercase tracking-wide text-right">Cuota IVA</td>
+                <td className="px-4 py-2 text-xs font-bold text-amber-700 uppercase tracking-wide text-right">Rec. equiv.</td>
+                <td className="px-4 py-2 text-xs font-bold text-emerald-800 uppercase tracking-wide text-right">Subtotal</td>
+              </tr>
+              {m303.sortEntries(m303.repMap).map(([key, v]) => (
+                <tr key={key} className="border-b border-slate-100 hover:bg-emerald-50/30">
+                  <td className="px-4 py-2 text-sm text-slate-700">
+                    {v.label ? v.label : v.exento
+                      ? <span className="text-xs bg-gray-100 px-2 py-0.5 rounded font-semibold text-gray-600">Exento (0%)</span>
+                      : <span className="flex items-center gap-1.5 flex-wrap">
+                          <span className="bg-emerald-100 text-emerald-800 text-xs px-2 py-0.5 rounded font-bold">IVA {key}%</span>
+                          {v.conRecargo && <span className="bg-amber-100 text-amber-800 text-xs px-2 py-0.5 rounded font-bold">+R.eq.{v.recargoPct}%</span>}
+                        </span>
+                    }
+                  </td>
+                  <td className="px-4 py-2 text-sm text-right font-mono text-slate-700">{fmt(v.base)}</td>
+                  <td className="px-4 py-2 text-sm text-right font-mono text-emerald-700">{v.exento ? "—" : fmt(v.cuota)}</td>
+                  <td className="px-4 py-2 text-sm text-right font-mono text-amber-700">{(v.recargo||0)>0 ? fmt(v.recargo) : "—"}</td>
+                  <td className="px-4 py-2 text-sm text-right font-mono font-semibold text-slate-800">{fmt(v.base+v.cuota+(v.recargo||0))}</td>
+                </tr>
+              ))}
+              <tr className="bg-emerald-100 border-b-2 border-emerald-300">
+                <td className="px-4 py-2.5 text-sm font-black text-emerald-900">TOTAL REPERCUTIDO</td>
+                <td className="px-4 py-2.5 text-sm text-right font-mono font-black text-emerald-900">{fmt(m303.totalRepBase)}</td>
+                <td className="px-4 py-2.5 text-sm text-right font-mono font-black text-emerald-900">{fmt(m303.totalRepCuota)}</td>
+                <td className="px-4 py-2.5 text-sm text-right font-mono font-black text-amber-800">{m303.totalRepRecargo>0?fmt(m303.totalRepRecargo):"—"}</td>
+                <td className="px-4 py-2.5 text-sm text-right font-mono font-black text-emerald-900">{fmt(m303.totalRepCuota+m303.totalRepRecargo)}</td>
+              </tr>
+              {/* IVA Soportado (Gastos) */}
+              <tr className="bg-rose-50 border-b border-slate-200">
+                <td className="px-4 py-2 text-xs font-bold text-rose-800 uppercase tracking-wide">IVA Soportado — Gastos</td>
+                <td className="px-4 py-2 text-xs font-bold text-rose-800 uppercase tracking-wide text-right">Base imponible</td>
+                <td className="px-4 py-2 text-xs font-bold text-rose-800 uppercase tracking-wide text-right">Cuota IVA</td>
+                <td className="px-4 py-2 text-xs font-bold text-amber-700 uppercase tracking-wide text-right">Rec. equiv.</td>
+                <td className="px-4 py-2 text-xs font-bold text-rose-800 uppercase tracking-wide text-right">Subtotal</td>
+              </tr>
+              {Object.keys(m303.sopMap).length===0
+                ? <tr><td colSpan={5} className="px-4 py-3 text-sm text-slate-400 text-center italic">Sin gastos en este trimestre</td></tr>
+                : m303.sortEntries(m303.sopMap).map(([key, v]) => (
+                  <tr key={key} className="border-b border-slate-100 hover:bg-rose-50/30">
+                    <td className="px-4 py-2 text-sm text-slate-700">
+                      {v.exento
+                        ? <span className="text-xs bg-gray-100 px-2 py-0.5 rounded font-semibold text-gray-600">Exento (0%)</span>
+                        : <span className="flex items-center gap-1.5 flex-wrap">
+                            <span className="bg-rose-100 text-rose-800 text-xs px-2 py-0.5 rounded font-bold">IVA {key}%</span>
+                            {v.conRecargo && <span className="bg-amber-100 text-amber-800 text-xs px-2 py-0.5 rounded font-bold">+R.eq.{v.recargoPct}%</span>}
+                          </span>
+                      }
+                    </td>
+                    <td className="px-4 py-2 text-sm text-right font-mono text-slate-700">{fmt(v.base)}</td>
+                    <td className="px-4 py-2 text-sm text-right font-mono text-rose-600">{v.exento ? "—" : fmt(v.cuota)}</td>
+                    <td className="px-4 py-2 text-sm text-right font-mono text-amber-700">{(v.recargo||0)>0 ? fmt(v.recargo) : "—"}</td>
+                    <td className="px-4 py-2 text-sm text-right font-mono font-semibold text-slate-800">{fmt(v.base+v.cuota+(v.recargo||0))}</td>
+                  </tr>
+                ))
+              }
+              <tr className="bg-rose-100 border-b-2 border-rose-300">
+                <td className="px-4 py-2.5 text-sm font-black text-rose-900">TOTAL SOPORTADO DEDUCIBLE</td>
+                <td className="px-4 py-2.5 text-sm text-right font-mono font-black text-rose-900">{fmt(m303.totalSopBase)}</td>
+                <td className="px-4 py-2.5 text-sm text-right font-mono font-black text-rose-900">{fmt(m303.totalSopCuota)}</td>
+                <td className="px-4 py-2.5 text-sm text-right font-mono font-black text-amber-800">{m303.totalSopRecargo>0?fmt(m303.totalSopRecargo):"—"}</td>
+                <td className="px-4 py-2.5 text-sm text-right font-mono font-black text-rose-900">{fmt(m303.totalSopCuota+m303.totalSopRecargo)}</td>
+              </tr>
+              {/* Resultado */}
+              <tr className={`font-black text-base border-t-2 ${m303.resultado>=0?"bg-slate-900 text-white":"bg-emerald-700 text-white"}`}>
+                <td className="px-4 py-3.5" colSpan={4}>
+                  {m303.resultado>=0 ? "CUOTA DIFERENCIAL A INGRESAR — Mod. 303" : "CUOTA A DEVOLVER / COMPENSAR — Mod. 303"}
+                </td>
+                <td className="px-4 py-3.5 text-right font-mono text-xl">{fmt(Math.abs(m303.resultado))} EUR</td>
+              </tr>
             </tbody>
           </table>
         </div>
@@ -7013,6 +7746,7 @@ function ContaAutoApp() {
                 {view==="trabajadores" && <VistaTrabajadores trabajadores={trabajadores} onNew={() => {setEditing(null);setSubview("new-trabajador");}} onEdit={t=>{setEditing(t);setSubview("edit-trabajador");}} onDelete={delTrabajador} onBaja={toggleBaja}/>}
                 {view==="nominas"      && <VistaNominas nominas={nominas} trabajadores={trabajadores} onNew={() => {setEditing(null);setSubview("new-nomina");}} onView={n=>setViewing({tipo:"nomina",data:n})} onDelete={delNomina} periodMode={periodMode} periodValue={periodValue} periodYear={periodYear}/>}
                 {view==="actividades"  && <GestionActividades actividades={actividades} setActividades={setActividades}/>}
+                {view==="gestoria"     && <SafeView name="Informe Gestoria"><VistaInformeGestoria facturas={facturas} nominas={nominas} actividades={actividades}/></SafeView>}
                 {view==="mod347"       && <Vista347 facturas={facturas} year={periodYear} availYears={availYears}/>}
                 {view==="contactos"    && <VistaContactos contactos={contactos} setContactos={setContactos} facturas={facturas} onView={f=>setViewing({tipo:"factura",data:f})} onSaveContacto={saveContactoToDB} onDeleteContacto={deleteContactoFromDB}/>}
                 {view==="extracto"     && <VistaExtractoBancario facturas={facturas} nominas={nominas}/>}
