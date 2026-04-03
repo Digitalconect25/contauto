@@ -3373,7 +3373,21 @@ function Dashboard({ facturas, nominas, trabajadores, periodMode, periodValue, p
 
   const porActividad = useMemo(() => {
     const map={};
-    factP.forEach(f=>{if(!map[f.actividad])map[f.actividad]={ingresos:0,gastos:0,n:0};const t=calcFacturaReal(f);if(f.tipo==="venta")map[f.actividad].ingresos+=t.totalBase;else map[f.actividad].gastos+=t.totalBase;map[f.actividad].n++;});
+    factP.forEach(f=>{
+      const act = f.actividad || "Sin actividad";
+      if(!map[act]) map[act]={ingresos:0,ivaRep:0,retencion:0,total:0,gastos:0,ivaGas:0,n:0};
+      const t=calcFacturaReal(f);
+      if(f.tipo==="venta"){
+        map[act].ingresos  += t.totalBase;
+        map[act].ivaRep    += t.totalIVA + (t.totalRecargo||0);
+        map[act].retencion += t.totalRetencion||0;
+        map[act].total     += t.totalBase + t.totalIVA + (t.totalRecargo||0) - (t.totalRetencion||0);
+      } else {
+        map[act].gastos    += t.totalBase;
+        map[act].ivaGas    += t.totalIVA;
+      }
+      map[act].n++;
+    });
     return Object.entries(map).sort((a,b)=>(b[1].ingresos+b[1].gastos)-(a[1].ingresos+a[1].gastos));
   }, [factP]);
   const maxBar = Math.max(...porActividad.map(([,v])=>v.ingresos+v.gastos),1);
@@ -3586,14 +3600,19 @@ function Dashboard({ facturas, nominas, trabajadores, periodMode, periodValue, p
               </thead>
               <tbody>
                 {porActividad.map(([act,v]) => {
-                  const r=v.ingresos-v.gastos;
+                  const r = v.ingresos - v.gastos;
                   return (<tr key={act} className="border-t border-gray-100 hover:bg-gray-50">
                     <td className="py-3 px-4 font-semibold text-gray-800">{act}</td>
-                    <td className="py-3 px-4 text-right text-gray-400">{v.n}</td>
+                    <td className="py-3 px-4 text-right text-gray-400 font-mono">{v.n}</td>
                     <td className="py-3 px-4 text-right font-semibold text-emerald-700 font-mono">{fmt(v.ingresos)}</td>
+                    <td className="py-3 px-4 text-right font-semibold text-sky-700 font-mono">{v.ivaRep>0 ? fmt(v.ivaRep) : "—"}</td>
+                    <td className="py-3 px-4 text-right font-semibold text-slate-700 font-mono">{fmt(v.total)}</td>
+                    <td className="py-3 px-4 text-right font-semibold text-emerald-600 font-mono">
+                      {fmt(v.ingresos - v.retencion)}
+                      {v.retencion>0 && <span className="block text-xs text-orange-400">-{fmt(v.retencion)} ret.</span>}
+                    </td>
                     <td className="py-3 px-4 text-right font-semibold text-rose-600 font-mono">{fmt(v.gastos)}</td>
-                    <td className={`py-3 px-4 text-right font-black font-mono ${r>=0?"text-sky-700":"text-orange-600"}`}>{fmt(r)}</td>
-                    <td className="py-3 px-4"><div className="bg-gray-200 rounded-full h-1.5"><div className="bg-slate-700 h-1.5 rounded-full" style={{width:`${Math.round(((v.ingresos+v.gastos)/maxBar)*100)}%`}}/></div></td>
+                    <td className={`py-3 px-4 text-right font-black font-mono ${r>=0?"text-sky-700":"text-orange-600"}`}>{r>=0?"+":""}{fmt(r)}</td>
                   </tr>);
                 })}
               </tbody>
