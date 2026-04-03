@@ -3473,47 +3473,47 @@ function Dashboard({ facturas, nominas, trabajadores, periodMode, periodValue, p
                 const tRepRec=repArr.reduce((s,[,v])=>s+(v.r||0),0);
                 const tSopRec=sopArr.reduce((s,[,v])=>s+(v.r||0),0);
                 return (<>
-                  <div className="rounded-lg overflow-hidden border border-emerald-600/30 mb-1">
-                    <div className="grid grid-cols-3 px-2.5 py-1 bg-emerald-900/30 text-xs font-bold text-emerald-200">
+                  <div className="rounded-lg overflow-hidden border border-emerald-700 mb-1">
+                    <div className="grid grid-cols-3 px-2.5 py-1 bg-emerald-700 text-xs font-bold text-white">
                       <span>Repercutido (ventas)</span><span className="text-right">Base</span><span className="text-right">Cuota+R.eq.</span>
                     </div>
                     {repArr.length===0
-                      ? <div className="px-2.5 py-1 text-xs text-emerald-200/40 italic">Sin ventas</div>
+                      ? <div className="px-2.5 py-1 text-xs text-slate-500 italic">Sin ventas</div>
                       : repArr.map(([k,v])=>(
-                        <div key={k} className="grid grid-cols-3 px-2.5 py-0.5 text-xs text-emerald-100 border-t border-emerald-700/20">
-                          <span>{v.lbl?v.lbl:k==="E"?"Exento":`${k}%`}{(v.r||0)>0?" +RE":""}</span>
+                        <div key={k} className="grid grid-cols-3 px-2.5 py-0.5 text-xs text-slate-800 border-t border-emerald-200 bg-white/60">
+                          <span className="font-semibold">{v.lbl?v.lbl:k==="E"?"Exento":`${k}%`}{(v.r||0)>0?" +RE":""}</span>
                           <span className="text-right font-mono">{fmt(v.b)}</span>
-                          <span className="text-right font-mono text-emerald-300">+{fmt(v.c+(v.r||0))}</span>
+                          <span className="text-right font-mono text-emerald-800 font-bold">+{fmt(v.c+(v.r||0))}</span>
                         </div>
                       ))
                     }
-                    <div className="grid grid-cols-3 px-2.5 py-1 border-t border-emerald-600/40 text-xs font-black text-white bg-emerald-800/40">
-                      <span>Total rep.{tRepRec>0?` (R.eq.${fmt(tRepRec)})`:" "}</span>
+                    <div className="grid grid-cols-3 px-2.5 py-1 border-t border-emerald-700 text-xs font-black text-white bg-emerald-700">
+                      <span>Total rep.{tRepRec>0?` (R.eq.${fmt(tRepRec)})`:""}</span>
                       <span className="text-right font-mono">{fmt(repArr.reduce((s,[,v])=>s+v.b,0))}</span>
                       <span className="text-right font-mono">+{fmt(qF.ivaRep+tRepRec)}</span>
                     </div>
                   </div>
-                  <div className="rounded-lg overflow-hidden border border-rose-600/30 mb-1">
-                    <div className="grid grid-cols-3 px-2.5 py-1 bg-rose-900/30 text-xs font-bold text-rose-200">
+                  <div className="rounded-lg overflow-hidden border border-rose-700 mb-1">
+                    <div className="grid grid-cols-3 px-2.5 py-1 bg-rose-700 text-xs font-bold text-white">
                       <span>Soportado (gastos)</span><span className="text-right">Base</span><span className="text-right">Cuota+R.eq.</span>
                     </div>
                     {sopArr.length===0
-                      ? <div className="px-2.5 py-1 text-xs text-rose-200/40 italic">Sin gastos</div>
+                      ? <div className="px-2.5 py-1 text-xs text-slate-500 italic">Sin gastos</div>
                       : sopArr.map(([k,v])=>(
-                        <div key={k} className="grid grid-cols-3 px-2.5 py-0.5 text-xs text-rose-100 border-t border-rose-700/20">
-                          <span>{k==="E"?"Exento":`${k}%`}{(v.r||0)>0?" +RE":""}</span>
+                        <div key={k} className="grid grid-cols-3 px-2.5 py-0.5 text-xs text-slate-800 border-t border-rose-200 bg-white/60">
+                          <span className="font-semibold">{k==="E"?"Exento":`${k}%`}{(v.r||0)>0?" +RE":""}</span>
                           <span className="text-right font-mono">{fmt(v.b)}</span>
-                          <span className="text-right font-mono text-rose-300">-{fmt(v.c+(v.r||0))}</span>
+                          <span className="text-right font-mono text-rose-800 font-bold">-{fmt(v.c+(v.r||0))}</span>
                         </div>
                       ))
                     }
-                    <div className="grid grid-cols-3 px-2.5 py-1 border-t border-rose-600/40 text-xs font-black text-white bg-rose-800/40">
+                    <div className="grid grid-cols-3 px-2.5 py-1 border-t border-rose-700 text-xs font-black text-white bg-rose-700">
                       <span>Total soportado</span>
                       <span className="text-right font-mono">{fmt(sopArr.reduce((s,[,v])=>s+v.b,0))}</span>
                       <span className="text-right font-mono">-{fmt(qF.ivaSop+tSopRec)}</span>
                     </div>
                   </div>
-                  {ivaAPagar < 0 && <div className="text-xs text-indigo-300 mt-1">Crédito a compensar o solicitar devolución en 4T</div>}
+                  {ivaAPagar < 0 && <div className="text-xs text-slate-700 font-semibold mt-1">Crédito a compensar o solicitar devolución en 4T</div>}
                   <div className="flex justify-between font-black border-t border-amber-300 pt-2 text-base">
                     <span className="text-amber-900">{ivaAPagar >= 0 ? "Cuota a ingresar" : "A compensar"}</span>
                     <span className="text-amber-900 font-mono">{fmt(Math.abs(ivaAPagar))}</span>
@@ -3582,7 +3582,7 @@ function Dashboard({ facturas, nominas, trabajadores, periodMode, periodValue, p
           <div className="bg-white border border-gray-200 rounded-2xl overflow-hidden shadow-sm">
             <table className="w-full text-sm">
               <thead className="bg-gray-50 border-b border-gray-200">
-                <tr>{["Actividad","Docs.","Ingresos","Gastos","Resultado",""].map((h,i)=>(<th key={i} className={`py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wide ${i===0?"text-left":"text-right"} ${i===5?"w-28":""}`}>{h}</th>))}</tr>
+                <tr>{["Actividad","Docs.","Base impon.","IVA rep.","Val. total","Ingr. netos","Gastos","Resultado"].map((h,i)=>(<th key={i} className={`py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wide ${i===0?"text-left":"text-right"}`}>{h}</th>))}</tr>
               </thead>
               <tbody>
                 {porActividad.map(([act,v]) => {
@@ -4225,10 +4225,32 @@ function VistaInformeGestoria({ facturas, nominas, actividades }) {
                     </div>
                   </div>
                 </div>
-                <div className="flex items-center gap-5 text-right">
-                  <div><div className="text-xs text-gray-400">Ingresos</div><div className="font-bold font-mono text-emerald-700">+{fmt(d.ventasBase)}</div></div>
-                  <div><div className="text-xs text-gray-400">Gastos</div><div className="font-bold font-mono text-rose-600">-{fmt(d.gastosBase+d.nominasCoste)}</div></div>
-                  <div className="min-w-28"><div className="text-xs text-gray-400">Resultado neto</div><div className={`font-black font-mono text-lg ${colorB(d.beneficioBruto)}`}>{d.beneficioBruto>=0?"+":""}{fmt(d.beneficioBruto)}</div></div>
+                <div className="flex items-center gap-4 text-right flex-wrap justify-end">
+                  <div>
+                    <div className="text-xs text-gray-400">Base imponible</div>
+                    <div className="font-bold font-mono text-emerald-700">+{fmt(d.ventasBase)}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-gray-400">IVA repercutido</div>
+                    <div className="font-bold font-mono text-sky-700">+{fmt(d.ventasIVA+(d.ventasRecargo||0))}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-gray-400">Valor total facturado</div>
+                    <div className="font-bold font-mono text-slate-700">{fmt(d.ventasBase+d.ventasIVA+(d.ventasRecargo||0)-d.ventasRetencion)}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-gray-400">Ingresos netos</div>
+                    <div className="font-bold font-mono text-emerald-600">{fmt(d.ventasBase-d.ventasRetencion)}</div>
+                    {d.ventasRetencion>0&&<div className="text-xs text-orange-500 font-mono">-{fmt(d.ventasRetencion)} ret.</div>}
+                  </div>
+                  <div>
+                    <div className="text-xs text-gray-400">Gastos</div>
+                    <div className="font-bold font-mono text-rose-600">-{fmt(d.gastosBase+d.nominasCoste)}</div>
+                  </div>
+                  <div className="min-w-28 border-l border-gray-200 pl-4">
+                    <div className="text-xs text-gray-400">Resultado neto</div>
+                    <div className={`font-black font-mono text-lg ${colorB(d.beneficioBruto)}`}>{d.beneficioBruto>=0?"+":""}{fmt(d.beneficioBruto)}</div>
+                  </div>
                   <div className="text-gray-400 text-lg">{expandidas[d.actividad]?"▲":"▼"}</div>
                 </div>
               </button>
