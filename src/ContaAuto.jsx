@@ -3383,7 +3383,7 @@ function Dashboard({ facturas, nominas, trabajadores, periodMode, periodValue, p
     const map={};
     factP.forEach(f=>{
       const act = f.actividad || "Sin actividad";
-      if(!map[act]) map[act]={ingresos:0,ivaRep:0,retencion:0,total:0,gastos:0,ivaGas:0,n:0};
+      if(!map[act]) map[act]={ingresos:0,ivaRep:0,retencion:0,total:0,gastos:0,ivaGas:0,retGas:0,n:0};
       const t=calcFacturaReal(f);
       if(f.tipo==="venta"){
         map[act].ingresos  += t.totalBase;
@@ -3393,6 +3393,7 @@ function Dashboard({ facturas, nominas, trabajadores, periodMode, periodValue, p
       } else {
         map[act].gastos    += t.totalBase;
         map[act].ivaGas    += t.totalIVA;
+        map[act].retGas    += t.totalRetencion||0;
       }
       map[act].n++;
     });
@@ -3628,17 +3629,29 @@ function Dashboard({ facturas, nominas, trabajadores, periodMode, periodValue, p
               <tbody>
                 {porActividad.map(([act,v]) => {
                   const r = v.ingresos - v.gastos;
+                  // Si solo hay gastos (sin ingresos): mostrar base y IVA del gasto
+                  const soloGasto = v.ingresos === 0 && v.gastos > 0;
+                  const baseCol   = soloGasto ? v.gastos   : v.ingresos;
+                  const ivaCol    = soloGasto ? v.ivaGas   : v.ivaRep;
+                  const totalCol  = soloGasto ? (v.gastos + v.ivaGas - v.retGas) : v.total;
+                  const netCol    = soloGasto ? (v.gastos - v.retGas) : (v.ingresos - v.retencion);
+                  const retCol    = soloGasto ? v.retGas   : v.retencion;
+                  const baseColor = soloGasto ? "text-rose-600" : "text-emerald-700";
+                  const ivaColor  = soloGasto ? "text-amber-700" : "text-sky-700";
+                  const netColor  = soloGasto ? "text-rose-500"  : "text-emerald-600";
                   return (<tr key={act} className="border-t border-gray-100 hover:bg-gray-50">
-                    <td className="py-3 px-4 font-semibold text-gray-800">{act}</td>
-                    <td className="py-3 px-4 text-right text-gray-400 font-mono">{v.n}</td>
-                    <td className="py-3 px-4 text-right font-semibold text-emerald-700 font-mono">{fmt(v.ingresos)}</td>
-                    <td className="py-3 px-4 text-right font-semibold text-sky-700 font-mono">{v.ivaRep>0 ? fmt(v.ivaRep) : "—"}</td>
-                    <td className="py-3 px-4 text-right font-semibold text-slate-700 font-mono">{fmt(v.total)}</td>
-                    <td className="py-3 px-4 text-right font-semibold text-emerald-600 font-mono">
-                      {fmt(v.ingresos - v.retencion)}
-                      {v.retencion>0 && <span className="block text-xs text-orange-400">-{fmt(v.retencion)} ret.</span>}
+                    <td className="py-3 px-4 font-semibold text-gray-800">
+                      {act}{soloGasto && <span className="ml-1.5 text-xs text-rose-400 font-normal">(gasto)</span>}
                     </td>
-                    <td className="py-3 px-4 text-right font-semibold text-rose-600 font-mono">{fmt(v.gastos)}</td>
+                    <td className="py-3 px-4 text-right text-gray-400 font-mono">{v.n}</td>
+                    <td className={`py-3 px-4 text-right font-semibold font-mono ${baseColor}`}>{fmt(baseCol)}</td>
+                    <td className={`py-3 px-4 text-right font-semibold font-mono ${ivaColor}`}>{ivaCol>0 ? fmt(ivaCol) : "—"}</td>
+                    <td className="py-3 px-4 text-right font-semibold text-slate-700 font-mono">{fmt(totalCol)}</td>
+                    <td className="py-3 px-4 text-right font-semibold font-mono">
+                      <span className={netColor}>{fmt(netCol)}</span>
+                      {retCol>0 && <span className="block text-xs text-orange-400">-{fmt(retCol)} ret.</span>}
+                    </td>
+                    <td className="py-3 px-4 text-right font-semibold text-rose-600 font-mono">{soloGasto ? "—" : fmt(v.gastos)}</td>
                     <td className={`py-3 px-4 text-right font-black font-mono ${r>=0?"text-sky-700":"text-orange-600"}`}>{r>=0?"+":""}{fmt(r)}</td>
                   </tr>);
                 })}
