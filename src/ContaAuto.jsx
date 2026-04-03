@@ -28,7 +28,7 @@ const Q_NAMES    = ["1er Trimestre","2º Trimestre","3er Trimestre","4º Trimest
 const Q_LABELS   = ["1T","2T","3T","4T"];
 const MONTHS     = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
 const MONTHS_S   = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
-const ACTS_INIT  = ["Marketing","Tienda","Energía","Telefonía","Amazon","Western Union","Ría","Paquetería General"];
+const ACTS_INIT  = ["Marketing","Tienda","Alquiler","Energía","Telefonía","Amazon","Western Union","Ría","Paquetería General"];
 
 // Tipos de documento recibido
 const TIPOS_DOC = [
@@ -172,8 +172,9 @@ function getPeriodLabel(mode, value, year) {
 }
 function summarizeFacturas(flist) {
   // retencionesSop = IRPF que clientes te retienen en tus ventas → reduce Mod. 130
-  // retencionesRep = IRPF que tú retienes a profesionales en gastos → a ingresar Mod. 111
-  let ingresos = 0, gastos = 0, ivaRep = 0, ivaSop = 0, retencionesSop = 0, retencionesRep = 0;
+  // retencionesRep    = IRPF que retienes a profesionales en gastos → Mod. 111
+  // retencionesAlquiler = IRPF que retienes sobre alquiler de inmuebles → Mod. 115
+  let ingresos = 0, gastos = 0, ivaRep = 0, ivaSop = 0, retencionesSop = 0, retencionesRep = 0, retencionesAlquiler = 0;
   flist.forEach(f => {
     const t = calcFacturaReal(f);
     if (f.tipo === "venta") {
@@ -181,12 +182,17 @@ function summarizeFacturas(flist) {
       retencionesSop += t.totalRetencion; // IRPF soportado (te descuentan en tu factura)
     } else {
       gastos += t.totalBase; ivaSop += t.totalIVA;
-      retencionesRep += t.totalRetencion; // IRPF que debes ingresar en nombre del profesional pagado
+      // Separar retención de alquiler (Mod.115) de retención a profesionales (Mod.111)
+      if ((f.actividad || "").toLowerCase() === "alquiler") {
+        retencionesAlquiler += t.totalRetencion;
+      } else {
+        retencionesRep += t.totalRetencion; // IRPF que debes ingresar en nombre del profesional pagado
+      }
     }
   });
   return { ingresos, gastos, ivaRep, ivaSop,
     retenciones: retencionesSop, // alias legacy para Mod. 130
-    retencionesSop, retencionesRep,
+    retencionesSop, retencionesRep, retencionesAlquiler,
     beneficio: ingresos - gastos };
 }
 function summarizeNominas(nlist) {
@@ -3205,7 +3211,7 @@ function ListaFacturas({ facturas, logo, onEdit, onDelete, onView, tipoFiltro, p
 // ════════════════════════════════════════════════════════════
 // HTML IMPRIMIBLE - RESUMEN CONTABLE (mes / trimestre / año)
 // ════════════════════════════════════════════════════════════
-function buildResumenContablePrintHTML({ pLabel, qLabel, resF, resN, gastosTotal, ivaAPagar, pagoIRPF_F, irpf111, factP, nomiP, porActividad, periodMode, periodValue, periodYear }) {
+function buildResumenContablePrintHTML({ pLabel, qLabel, resF, resN, gastosTotal, ivaAPagar, pagoIRPF_F, irpf111, irpf115, factP, nomiP, porActividad, periodMode, periodValue, periodYear }) {
   const now = new Date().toLocaleDateString("es-ES", { day:"2-digit", month:"long", year:"numeric" });
   const rowsFacturas = (tipo) => factP.filter(f=>f.tipo===tipo).map(f=>{
     const t = calcFacturaReal(f);
@@ -3291,6 +3297,7 @@ function buildResumenContablePrintHTML({ pLabel, qLabel, resF, resN, gastosTotal
     <div class="fis"><div class="fis-title">Mod. 303 - IVA a ingresar</div><div class="fis-val">${fmt(ivaAPagar)}</div><div class="fis-sub">IVA rep. ${fmt(resF.ivaRep)} - IVA sop. ${fmt(resF.ivaSop)}</div></div>
     <div class="fis"><div class="fis-title">Mod. 130 - IRPF estimación directa</div><div class="fis-val">${fmt(pagoIRPF_F)}</div><div class="fis-sub">20% sobre rendimiento neto</div></div>
     <div class="fis"><div class="fis-title">Mod. 111 - IRPF retenciones</div><div class="fis-val">${fmt(irpf111)}</div><div class="fis-sub">Nóminas + profesionales externos</div></div>
+    ${irpf115 > 0 ? `<div class="fis"><div class="fis-title">Mod. 115 - Retención alquiler</div><div class="fis-val">${fmt(irpf115)}</div><div class="fis-sub">Arrendamiento inmueble · 19%</div></div>` : ""}
   </div>
 
   ${porActividad.length > 0 ? `
@@ -3366,9 +3373,10 @@ function Dashboard({ facturas, nominas, trabajadores, periodMode, periodValue, p
   // Minoración: retenciones soportadas en ventas (IRPF que clientes retienen)
   const rendNeto    = Math.max(0, qF.beneficio - qN.totalCoste);
   const pagoIRPF_F  = Math.max(0, rendNeto * 0.20 - qF.retencionesSop);
-  // Mod. 111: IRPF retenciones practicadas
-  // Trabajadores (nóminas) + profesionales autónomos pagados con retención
+  // Mod. 111: IRPF retenciones practicadas (nóminas + profesionales externos)
   const irpf111     = qN.totalIRPF + qF.retencionesRep;
+  // Mod. 115: Retenciones sobre arrendamiento de inmuebles urbanos
+  const irpf115     = qF.retencionesAlquiler;
   const qLabel      = `${Q_NAMES[qIdx]} ${periodYear}`;
 
   const porActividad = useMemo(() => {
@@ -3393,11 +3401,11 @@ function Dashboard({ facturas, nominas, trabajadores, periodMode, periodValue, p
   const maxBar = Math.max(...porActividad.map(([,v])=>v.ingresos+v.gastos),1);
 
   const handlePrintResumen = () => {
-    const html = buildResumenContablePrintHTML({ pLabel, qLabel, resF, resN, gastosTotal, ivaAPagar, pagoIRPF_F, irpf111, factP, nomiP, porActividad, periodMode, periodValue, periodYear });
+    const html = buildResumenContablePrintHTML({ pLabel, qLabel, resF, resN, gastosTotal, ivaAPagar, pagoIRPF_F, irpf111, irpf115, factP, nomiP, porActividad, periodMode, periodValue, periodYear });
     openPrint(html);
   };
   const handlePDFResumen = () => {
-    const html = buildResumenContablePrintHTML({ pLabel, qLabel, resF, resN, gastosTotal, ivaAPagar, pagoIRPF_F, irpf111, factP, nomiP, porActividad, periodMode, periodValue, periodYear });
+    const html = buildResumenContablePrintHTML({ pLabel, qLabel, resF, resN, gastosTotal, ivaAPagar, pagoIRPF_F, irpf111, irpf115, factP, nomiP, porActividad, periodMode, periodValue, periodYear });
     downloadPDF(html, `resumen-contable-${pLabel.replace(/ /g,"-")}.pdf`);
   };
 
@@ -3562,9 +3570,9 @@ function Dashboard({ facturas, nominas, trabajadores, periodMode, periodValue, p
           <div className="bg-violet-50 border border-violet-200 rounded-xl p-5">
             <div className="flex items-center gap-2 mb-1">
               <span className="bg-violet-600 text-white text-xs font-black px-2 py-0.5 rounded">MOD. 111</span>
-              <span className="text-sm font-bold text-violet-900">IRPF</span>
+              <span className="text-sm font-bold text-violet-900">IRPF retenciones</span>
             </div>
-            <p className="text-xs text-violet-700 mb-3">Retenciones e ingresos a cuenta · art. 76 RIRPF</p>
+            <p className="text-xs text-violet-700 mb-3">Nóminas y profesionales externos · art. 76 RIRPF</p>
             <div className="space-y-1.5 text-sm">
               {qN.totalIRPF > 0 && <div className="flex justify-between"><span className="text-gray-600">IRPF trabajadores</span><span className="font-semibold font-mono">{fmt(qN.totalIRPF)}</span></div>}
               {qF.retencionesRep > 0 && <div className="flex justify-between"><span className="text-gray-600">IRPF profesionales</span><span className="font-semibold font-mono">{fmt(qF.retencionesRep)}</span></div>}
@@ -3578,6 +3586,25 @@ function Dashboard({ facturas, nominas, trabajadores, periodMode, periodValue, p
               </div>
             </div>
           </div>
+          {/* MOD. 115 - Retenciones arrendamiento inmuebles (art. 69 RIRPF) */}
+          {irpf115 > 0 && (
+          <div className="bg-teal-50 border border-teal-200 rounded-xl p-5">
+            <div className="flex items-center gap-2 mb-1">
+              <span className="bg-teal-600 text-white text-xs font-black px-2 py-0.5 rounded">MOD. 115</span>
+              <span className="text-sm font-bold text-teal-900">Retención alquiler</span>
+            </div>
+            <p className="text-xs text-teal-700 mb-3">Arrendamiento inmuebles urbanos · art. 69 RIRPF</p>
+            <div className="space-y-1.5 text-sm">
+              <div className="flex justify-between"><span className="text-gray-600">Base arrendamiento</span><span className="font-semibold font-mono">{fmt(factsQ.filter(f=>f.tipo==="gasto"&&(f.actividad||"").toLowerCase()==="alquiler").reduce((s,f)=>s+calcFacturaReal(f).totalBase,0))}</span></div>
+              <div className="flex justify-between"><span className="text-gray-600">Tipo retención</span><span className="font-semibold font-mono">19%</span></div>
+              <div className="flex justify-between font-black border-t border-teal-300 pt-2 text-base">
+                <span className="text-teal-900">A ingresar (115)</span>
+                <span className="text-teal-900 font-mono">{fmt(irpf115)}</span>
+              </div>
+              <p className="text-xs text-teal-600 mt-1">Plazo: 20 días siguientes al trimestre · Sede electrónica AEAT</p>
+            </div>
+          </div>
+          )}
         </div>
 
         {/* Nota legal */}
@@ -3586,8 +3613,8 @@ function Dashboard({ facturas, nominas, trabajadores, periodMode, periodValue, p
         </div>
 
         <KPI label={`Obligaciones fiscales estimadas · ${qLabel}`}
-          value={fmt(Math.max(0, ivaAPagar) + pagoIRPF_F + irpf111)} accent
-          sub={`Mod. 303: ${fmt(Math.max(0,ivaAPagar))} · Mod. 130: ${fmt(pagoIRPF_F)} · Mod. 111: ${fmt(irpf111)} · TGSS: ${fmt(qN.totalSSTrab+qN.totalSSEmp)}`}/>
+          value={fmt(Math.max(0, ivaAPagar) + pagoIRPF_F + irpf111 + irpf115)} accent
+          sub={`Mod. 303: ${fmt(Math.max(0,ivaAPagar))} · Mod. 130: ${fmt(pagoIRPF_F)} · Mod. 111: ${fmt(irpf111)} · Mod. 115: ${fmt(irpf115)} · TGSS: ${fmt(qN.totalSSTrab+qN.totalSSEmp)}`}/>
       </div>
 
       {porActividad.length>0 && (
@@ -5912,6 +5939,12 @@ function VistaModelos({ facturas, nominas, periodYear }) {
         baseRetenida += calc.totalBase;
         retenciones += calc.totalRetencion || 0;
       }
+      // Gastos a profesionales con retención (excluye alquiler que va en Mod.115)
+      if (f.tipo === "gasto" && (f.retencionPct||0) > 0 && (f.actividad||"").toLowerCase() !== "alquiler") {
+        const calc = calcFactura(f.lineas||[], f.retencionPct, false);
+        baseRetenida += calc.totalBase;
+        retenciones += calc.totalRetencion || 0;
+      }
     });
     // Retenciones de nominas del trimestre
     const nominasTrim = nominas.filter(n => {
@@ -5927,9 +5960,23 @@ function VistaModelos({ facturas, nominas, periodYear }) {
     return { baseRetenida, retenciones };
   };
 
+  // === MOD. 115 - Retenciones arrendamiento inmuebles ===
+  const calcMod115 = () => {
+    let baseArrendamiento = 0, retenciones = 0;
+    factsTrim.forEach(f => {
+      if (f.tipo === "gasto" && (f.retencionPct||0) > 0 && (f.actividad||"").toLowerCase() === "alquiler") {
+        const calc = calcFactura(f.lineas||[], f.retencionPct, false);
+        baseArrendamiento += calc.totalBase;
+        retenciones += calc.totalRetencion || 0;
+      }
+    });
+    return { baseArrendamiento, retenciones };
+  };
+
   const m303 = calcMod303();
   const m130 = calcMod130();
   const m111 = calcMod111();
+  const m115 = calcMod115();
 
   const printModelo = (titulo, filas) => {
     const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${titulo}</title>
@@ -5979,7 +6026,7 @@ function VistaModelos({ facturas, nominas, periodYear }) {
 
       {/* Tabs modelos */}
       <div className="flex gap-1 bg-slate-100 rounded-xl p-1">
-        {[["303","Mod. 303 - IVA"],["130","Mod. 130 - IRPF"],["111","Mod. 111 - Retenciones"]].map(([id,label]) => (
+        {[["303","Mod. 303 - IVA"],["130","Mod. 130 - IRPF"],["111","Mod. 111 - Retenciones"],["115","Mod. 115 - Alquiler"]].map(([id,label]) => (
           <button key={id} onClick={() => setTab(id)}
             className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-colors ${tab===id?"bg-white shadow-sm text-slate-800":"text-slate-500 hover:text-slate-700"}`}>
             {label}
@@ -6138,7 +6185,44 @@ function VistaModelos({ facturas, nominas, periodYear }) {
               <Fila label="TOTAL RETENCIONES A INGRESAR" val={m111.retenciones} bold sep color="text-rose-700"/>
             </tbody>
           </table>
-          <p className="px-4 py-3 text-xs text-slate-400">Incluye retenciones IRPF de facturas emitidas con retencion y las practicadas en nominas del trimestre.</p>
+          <p className="px-4 py-3 text-xs text-slate-400">Nóminas + facturas de profesionales externos con retención (excluye alquiler, que va en Mod. 115).</p>
+        </div>
+      )}
+
+      {/* MOD. 115 - Arrendamiento de inmuebles */}
+      {tab === "115" && (
+        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+          <div className="flex justify-between items-center px-4 py-3 border-b border-slate-200">
+            <h3 className="font-semibold text-slate-800">Modelo 115 - Retenciones sobre arrendamiento de inmuebles urbanos</h3>
+            <button onClick={() => printModelo("Modelo 115 - Retención Alquiler", [
+              {label:"Base arrendamiento del trimestre", valor: m115.baseArrendamiento},
+              {label:"Tipo de retención", valor: 0},
+              {label:"RETENCIÓN A INGRESAR (19%)", valor: m115.retenciones, total:true},
+            ])}
+              className="text-xs bg-teal-700 text-white px-3 py-1.5 rounded-lg hover:bg-teal-600">
+              Imprimir
+            </button>
+          </div>
+          {m115.retenciones === 0 ? (
+            <div className="px-4 py-8 text-center text-slate-400 text-sm">
+              Sin facturas de alquiler con retención en {trimLabel(trimestre)}.<br/>
+              <span className="text-xs mt-1 block">Asegúrate de que las facturas del local estén clasificadas en la actividad "Alquiler" con retención del 19%.</span>
+            </div>
+          ) : (
+            <table className="w-full">
+              <tbody>
+                <Fila label={`Arrendamiento mensual × 3 meses (${trimLabel(trimestre)})`} val={m115.baseArrendamiento}/>
+                <Fila label="Tipo de retención" val={0} bold/>
+                <tr className="border-b border-slate-100 bg-slate-50"><td className="py-2.5 px-4 text-sm text-slate-600">Tipo de retención aplicado</td><td className="py-2.5 px-4 text-right text-sm font-mono text-slate-800">19%</td></tr>
+                <Fila label="RETENCIÓN A INGRESAR" val={m115.retenciones} bold sep color="text-teal-700"/>
+              </tbody>
+            </table>
+          )}
+          <div className="px-4 py-3 bg-teal-50 border-t border-teal-100 text-xs text-teal-800 space-y-1">
+            <p><strong>Art. 69 RIRPF</strong> — Retenciones sobre rendimientos procedentes del arrendamiento o subarrendamiento de inmuebles urbanos.</p>
+            <p>Plazo de presentación: del 1 al 20 del mes siguiente al trimestre. El propietario del local lo declara en su IRPF como ingreso.</p>
+            <p className="text-teal-600 font-semibold">⚠ Este modelo es distinto del Mod. 111. Presentarlos por separado en la Sede Electrónica de la AEAT.</p>
+          </div>
         </div>
       )}
     </div>
