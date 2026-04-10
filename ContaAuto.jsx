@@ -4025,7 +4025,7 @@ function calcInformeActividades(facturas, nominas, mode, value, year) {
   return { actividades: actividades.sort((a,b) => b.ventasBase - a.ventasBase), totales: tot };
 }
 
-function buildInformeGestoriaHTML(data, pLabel, empresaNombre, empresaNif, irpf111Nom) {
+function buildInformeGestoriaHTML(data, pLabel, empresaNombre, empresaNif, irpf111Nom, sinFiscal = false) {
   const now = new Date().toLocaleDateString("es-ES", { day:"2-digit", month:"long", year:"numeric" });
   const { actividades, totales } = data;
   const fmtN = v => (v||0).toLocaleString("es-ES", { minimumFractionDigits:2, maximumFractionDigits:2 });
@@ -4089,7 +4089,7 @@ thead th:not(:first-child){text-align:right}tbody td{padding:5px 9px;border-bott
   <div class="kpi"><div class="kpi-lbl">Resultado neto</div><div class="kpi-val ${totales.beneficioBruto>=0?"g":"r"}">${totales.beneficioBruto>=0?"+":""}${fmtN(totales.beneficioBruto)} €</div></div>
   <div class="kpi"><div class="kpi-lbl">IVA neto (Mod.303)</div><div class="kpi-val b">${fmtN(totales.ivaLiquidar)} €</div></div>
 </div>
-<div class="st">Estimación modelos AEAT — ${pLabel}</div>
+${sinFiscal ? "" : `<div class="st">Estimación modelos AEAT — ${pLabel}</div>
 <div class="fiscal">
   <div class="fbox"><div class="fmod">Mod. 303 — IVA trimestral</div>
     <div class="fval" style="color:${totales.ivaLiquidar>=0?"#dc2626":"#15803d"}">${fmtN(Math.abs(totales.ivaLiquidar))} €</div>
@@ -4103,7 +4103,7 @@ thead th:not(:first-child){text-align:right}tbody td{padding:5px 9px;border-bott
     <div class="fval" style="color:#7e22ce">${fmtN(irpf111Nom)} €</div>
     <div class="fdet">IRPF nóminas + profesionales externos<br>SS total TGSS: ${fmtN((totales.nominasSSTrab||0)+(totales.nominasSSEmp||0))} €</div>
   </div>
-</div>
+</div>`}
 <div class="st">Desglose por actividad económica</div>
 <table><thead><tr><th style="width:21%">Actividad</th><th style="width:31%">Concepto</th><th style="width:30%;text-align:right">Importe</th><th style="width:18%;text-align:right">Detalle</th></tr></thead>
 <tbody>${actividades.map(d=>filaAct(d)).join("")}
@@ -4659,13 +4659,19 @@ function VistaInformeGestoria({ facturas, nominas, actividades }) {
     [facturas, mode, value, year]
   );
 
+  // Gestoría: siempre SIN estimaciones AEAT (sinFiscal=true)
   const handlePrint = () => {
-    const html = buildInformeGestoriaHTML(data, pLabel, empDef.nombre, empDef.nif, irpf111Nom);
+    const html = buildInformeGestoriaHTML(data, pLabel, empDef.nombre, empDef.nif, irpf111Nom, true);
     openPrint(html);
   };
   const handlePDF = () => {
-    const html = buildInformeGestoriaHTML(data, pLabel, empDef.nombre, empDef.nif, irpf111Nom);
+    const html = buildInformeGestoriaHTML(data, pLabel, empDef.nombre, empDef.nif, irpf111Nom, true);
     downloadPDF(html, "informe-gestoria-" + pLabel.replace(/ /g,"-").toLowerCase() + ".pdf");
+  };
+  // Uso interno: CON estimaciones AEAT
+  const handlePDFInterno = () => {
+    const html = buildInformeGestoriaHTML(data, pLabel, empDef.nombre, empDef.nif, irpf111Nom, false);
+    downloadPDF(html, "informe-interno-" + pLabel.replace(/ /g,"-").toLowerCase() + ".pdf");
   };
 
   // Handlers — desglose con/sin fiscal + resumen horizontal
@@ -4677,10 +4683,10 @@ function VistaInformeGestoria({ facturas, nominas, actividades }) {
   const handleSoloActV     = () => downloadPDF(buildResumenActividadesSinFiscalHTML(data, factsFil, pLabel, empDef.nombre, empDef.nif, false), `actividades-gestoria-vertical-${pLabel.replace(/ /g,"-")}.pdf`);
   const handleSoloActH     = () => downloadPDF(buildResumenActividadesSinFiscalHTML(data, factsFil, pLabel, empDef.nombre, empDef.nif, true),  `actividades-gestoria-horizontal-${pLabel.replace(/ /g,"-")}.pdf`);
   // Resumen completo SIN estimaciones AEAT (vertical + horizontal)
-  const handleResumenSinFiscalV = () => { const h = buildInformeGestoriaHTML(data, pLabel, empDef.nombre, empDef.nif, irpf111Nom); downloadPDF(stripEstimacionAEAT(h), `resumen-sin-estimaciones-vertical-${pLabel.replace(/ /g,"-")}.pdf`); };
-  const handleResumenSinFiscalH = () => { const h = buildInformeGestoriaHTML(data, pLabel, empDef.nombre, empDef.nif, irpf111Nom); downloadPDF(toGestoriaLandscape(stripEstimacionAEAT(h)), `resumen-sin-estimaciones-horizontal-${pLabel.replace(/ /g,"-")}.pdf`); };
-  // Resumen completo CON estimaciones AEAT (landscape)
-  const handleResumenComplH = () => { const h = buildInformeGestoriaHTML(data, pLabel, empDef.nombre, empDef.nif, irpf111Nom); downloadPDF(toGestoriaLandscape(h), `resumen-completo-horizontal-${pLabel.replace(/ /g,"-")}.pdf`); };
+  const handleResumenSinFiscalV = () => downloadPDF(buildInformeGestoriaHTML(data, pLabel, empDef.nombre, empDef.nif, irpf111Nom, true),  `resumen-gestoria-vertical-${pLabel.replace(/ /g,"-")}.pdf`);
+  const handleResumenSinFiscalH = () => downloadPDF(toGestoriaLandscape(buildInformeGestoriaHTML(data, pLabel, empDef.nombre, empDef.nif, irpf111Nom, true)),  `resumen-gestoria-horizontal-${pLabel.replace(/ /g,"-")}.pdf`);
+  // Uso interno CON estimaciones AEAT (horizontal)
+  const handleResumenComplH = () => downloadPDF(toGestoriaLandscape(buildInformeGestoriaHTML(data, pLabel, empDef.nombre, empDef.nif, irpf111Nom, false)), `resumen-interno-horizontal-${pLabel.replace(/ /g,"-")}.pdf`);
 
   const toggle = (act) => setExpandidas(p => ({...p, [act]: !p[act]}));
   const colorB = (v) => v >= 0 ? "text-emerald-700" : "text-rose-600";
@@ -4702,39 +4708,48 @@ function VistaInformeGestoria({ facturas, nominas, actividades }) {
           <div className="bg-white/5 border border-white/10 rounded-xl p-3 space-y-2.5 min-w-72">
             <div className="flex items-center justify-between">
               <span className="text-xs font-black text-white/60 uppercase tracking-widest">Descargar — {pLabel}</span>
-              <div className="flex gap-1">
-                <button onClick={handlePrint} className="px-2.5 py-1.5 bg-white/10 hover:bg-white/20 border border-white/20 rounded-lg text-xs font-bold transition-colors">{Ico.print}</button>
-                <button onClick={handlePDF} className="px-2.5 py-1.5 bg-blue-600 hover:bg-blue-500 rounded-lg text-xs font-bold transition-colors">{Ico.pdf} Completo</button>
-                <button onClick={handleResumenComplH} className="px-2.5 py-1.5 bg-blue-700 hover:bg-blue-600 rounded-lg text-xs font-bold transition-colors">↔ Horizontal</button>
+            </div>
+            {/* Para gestoría — SIN estimaciones AEAT */}
+            <div className="border border-emerald-500/30 rounded-lg p-2 space-y-1.5">
+              <div className="text-xs font-black text-emerald-400 uppercase tracking-widest mb-1">Para gestoría (sin AEAT)</div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs text-white/50 w-28">Resumen actividades</span>
+                <div className="flex gap-1">
+                  <button onClick={handlePrint} className="px-2.5 py-1.5 bg-white/10 hover:bg-white/20 border border-white/20 rounded-lg text-xs font-bold transition-colors">{Ico.print}</button>
+                  <button onClick={handlePDF} className="px-2.5 py-1.5 bg-emerald-700 hover:bg-emerald-600 rounded-lg text-xs font-bold transition-colors">↕ PDF</button>
+                  <button onClick={handleResumenSinFiscalH} className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded-lg text-xs font-bold transition-colors">↔ PDF</button>
+                </div>
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs text-white/50 w-28">Solo actividades + facturas</span>
+                <div className="flex gap-1">
+                  <button onClick={handleSoloActV} className="px-2.5 py-1.5 bg-violet-700 hover:bg-violet-600 rounded-lg text-xs font-bold transition-colors">↕ PDF</button>
+                  <button onClick={handleSoloActH} className="px-2.5 py-1.5 bg-violet-600 hover:bg-violet-500 rounded-lg text-xs font-bold transition-colors">↔ PDF</button>
+                </div>
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs text-white/50 w-28">Desglose completo</span>
+                <div className="flex gap-1">
+                  <button onClick={handleDesglosadoV} className="px-2.5 py-1.5 bg-sky-700 hover:bg-sky-600 rounded-lg text-xs font-bold transition-colors">↕ PDF</button>
+                  <button onClick={handleDesglosadoH} className="px-2.5 py-1.5 bg-sky-600 hover:bg-sky-500 rounded-lg text-xs font-bold transition-colors">↔ PDF</button>
+                </div>
               </div>
             </div>
-            <div className="border-t border-white/10 pt-2 space-y-1.5">
+            {/* Uso interno — CON estimaciones AEAT */}
+            <div className="border border-orange-500/30 rounded-lg p-2 space-y-1.5">
+              <div className="text-xs font-black text-orange-400 uppercase tracking-widest mb-1">Uso interno (con estimaciones)</div>
               <div className="flex items-center justify-between gap-2">
-                <span className="text-xs text-white/50 w-36">Resumen sin estimaciones AEAT</span>
+                <span className="text-xs text-white/50 w-28">Resumen + AEAT</span>
                 <div className="flex gap-1">
-                  <button onClick={handleResumenSinFiscalV} className="px-2.5 py-1.5 bg-orange-700 hover:bg-orange-600 rounded-lg text-xs font-bold transition-colors">↕ Vertical</button>
-                  <button onClick={handleResumenSinFiscalH} className="px-2.5 py-1.5 bg-orange-600 hover:bg-orange-500 rounded-lg text-xs font-bold transition-colors">↔ Horizontal</button>
+                  <button onClick={handlePDFInterno} className="px-2.5 py-1.5 bg-orange-700 hover:bg-orange-600 rounded-lg text-xs font-bold transition-colors">↕ PDF</button>
+                  <button onClick={handleResumenComplH} className="px-2.5 py-1.5 bg-orange-600 hover:bg-orange-500 rounded-lg text-xs font-bold transition-colors">↔ PDF</button>
                 </div>
               </div>
               <div className="flex items-center justify-between gap-2">
-                <span className="text-xs text-white/50 w-36">Solo actividades p/gestoría</span>
+                <span className="text-xs text-white/50 w-28">Solo modelos AEAT</span>
                 <div className="flex gap-1">
-                  <button onClick={handleSoloActV} className="px-2.5 py-1.5 bg-violet-700 hover:bg-violet-600 rounded-lg text-xs font-bold transition-colors">↕ Vertical</button>
-                  <button onClick={handleSoloActH} className="px-2.5 py-1.5 bg-violet-600 hover:bg-violet-500 rounded-lg text-xs font-bold transition-colors">↔ Horizontal</button>
-                </div>
-              </div>
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-xs text-white/50 w-36">Desglose completo con facturas</span>
-                <div className="flex gap-1">
-                  <button onClick={handleDesglosadoV} className="px-2.5 py-1.5 bg-emerald-700 hover:bg-emerald-600 rounded-lg text-xs font-bold transition-colors">↕ Vertical</button>
-                  <button onClick={handleDesglosadoH} className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded-lg text-xs font-bold transition-colors">↔ Horizontal</button>
-                </div>
-              </div>
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-xs text-white/50 w-36">Solo modelos AEAT (303/130/111/115)</span>
-                <div className="flex gap-1">
-                  <button onClick={handleFiscalV} className="px-2.5 py-1.5 bg-teal-700 hover:bg-teal-600 rounded-lg text-xs font-bold transition-colors">↕ Vertical</button>
-                  <button onClick={handleFiscalH} className="px-2.5 py-1.5 bg-teal-600 hover:bg-teal-500 rounded-lg text-xs font-bold transition-colors">↔ Horizontal</button>
+                  <button onClick={handleFiscalV} className="px-2.5 py-1.5 bg-teal-700 hover:bg-teal-600 rounded-lg text-xs font-bold transition-colors">↕ PDF</button>
+                  <button onClick={handleFiscalH} className="px-2.5 py-1.5 bg-teal-600 hover:bg-teal-500 rounded-lg text-xs font-bold transition-colors">↔ PDF</button>
                 </div>
               </div>
             </div>
