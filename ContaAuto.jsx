@@ -4054,8 +4054,8 @@ function buildInformeGestoriaHTML(data, pLabel, empresaNombre, empresaNif, irpf1
   ${d.nTienda>0?`<tr style="background:#faf5ff"><td class="lbl" colspan="2" style="color:#7e22ce;font-size:10px">
     Tienda — Subtotal: ${fmtN(d.tiendaSubtotal)} € · IVA: ${fmtN(d.tiendaImpuesto)} € · Coste mercancía: ${fmtN(d.tiendaCoste)} € · Beneficio: ${fmtN(d.tiendaBeneficio)} €</td><td></td></tr>`:""}
   <tr><td colspan="3" style="height:6px;background:transparent;border:none"></td></tr>`;
-  const css = `@page{margin:14mm 16mm;size:A4}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
-body{font-family:'Helvetica Neue',Arial,sans-serif;font-size:11px;color:#0f172a;margin:0;line-height:1.5}
+  const css = `@page{size:A4;margin:0}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}html{-webkit-print-color-adjust:exact}}
+body{font-family:'Helvetica Neue',Arial,sans-serif;font-size:11px;color:#0f172a;margin:14mm 16mm;line-height:1.5;-webkit-print-color-adjust:exact;print-color-adjust:exact}
 .hdr{background:#0f172a;color:#fff;padding:16px 20px;border-radius:8px;margin-bottom:18px;display:flex;justify-content:space-between;align-items:center}
 .hdr h1{font-size:17px;font-weight:900;margin:0}.hdr p{font-size:9px;color:rgba(255,255,255,.55);margin:2px 0 0}
 .badge{background:#2563eb;color:#fff;padding:3px 10px;border-radius:20px;font-size:9px;font-weight:800;text-transform:uppercase}
@@ -4166,9 +4166,9 @@ function buildInformeDesglosadoHTML(data, factsFil, pLabel, empresa, nif, irpf11
   const pageMargin = landscape ? "10mm 12mm" : "12mm 14mm";
 
   const css = `
-@page { margin:${pageMargin}; size:${pageSize}; }
-@media print { body { -webkit-print-color-adjust:exact; print-color-adjust:exact; } }
-body { font-family:'Helvetica Neue',Arial,sans-serif; font-size:9px; color:#0f172a; margin:0; line-height:1.4; }
+@page { size:${pageSize}; margin:0; }
+@media print { body { -webkit-print-color-adjust:exact; print-color-adjust:exact; } html { -webkit-print-color-adjust:exact; } }
+body { font-family:'Helvetica Neue',Arial,sans-serif; font-size:9px; color:#0f172a; margin:${pageMargin}; line-height:1.4; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
 .hdr { background:#0f172a; color:#fff; padding:12px 16px; margin-bottom:12px; display:flex; justify-content:space-between; align-items:center; border-radius:6px; }
 .hdr h1 { font-size:14px; font-weight:900; margin:0; }
 .hdr p { font-size:7.5px; color:rgba(255,255,255,.5); margin:2px 0 0; }
@@ -4362,9 +4362,9 @@ function buildInformeFiscalSoloHTML(data, pLabel, empresa, nif, irpf111, irpf115
     : `display:block`;
 
   const css = `
-@page { margin:${pageMargin}; size:${pageSize}; }
-@media print { body { -webkit-print-color-adjust:exact; print-color-adjust:exact; } }
-body { font-family:'Helvetica Neue',Arial,sans-serif; font-size:10px; color:#0f172a; margin:0; line-height:1.5; }
+@page { size:${pageSize}; margin:0; }
+@media print { body { -webkit-print-color-adjust:exact; print-color-adjust:exact; } html { -webkit-print-color-adjust:exact; } }
+body { font-family:'Helvetica Neue',Arial,sans-serif; font-size:10px; color:#0f172a; margin:${pageMargin}; line-height:1.5; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
 .hdr { background:#0f172a; color:#fff; padding:14px 18px; margin-bottom:14px; display:flex; justify-content:space-between; align-items:center; border-radius:6px; }
 .hdr h1 { font-size:15px; font-weight:900; margin:0; }
 .hdr p { font-size:8px; color:rgba(255,255,255,.5); margin:2px 0 0; }
@@ -4450,6 +4450,151 @@ Exenciones IVA: art.20.1.18 LIVA (Western Union, Ría) · No sustituye asesorami
 }
 
 
+
+// ════════════════════════════════════════════════════════════
+// RESUMEN ACTIVIDADES SIN ESTIMACIONES FISCALES (para gestoría)
+// Solo desglose por actividad — sin Mod.303/130/111/115
+// ════════════════════════════════════════════════════════════
+function buildResumenActividadesSinFiscalHTML(data, factsFil, pLabel, empresa, nif, landscape) {
+  const { actividades, totales } = data;
+  const now = new Date().toLocaleDateString("es-ES", { day:"2-digit", month:"long", year:"numeric" });
+  const fmtN = v => (v||0).toLocaleString("es-ES", { minimumFractionDigits:2, maximumFractionDigits:2 });
+  const pageSize   = landscape ? "A4 landscape" : "A4";
+  const pageMargin = landscape ? "10mm 14mm" : "14mm 16mm";
+  const cols = landscape
+    ? ["Actividad","Docs.","Base imponible","IVA repercutido","Ret. IRPF soportada","Total cobrado","Gastos (base)","IVA soportado","Ret. pagada","Total pagado","Resultado neto"]
+    : ["Actividad","Docs.","Base imponible","IVA repercutido","Ret.soportada","Total cobrado","Gastos","IVA sop.","Ret.pag.","Total pag.","Resultado"];
+
+  const filasAct = actividades.map(d => {
+    const esAlquiler = d.actividad.toLowerCase() === "alquiler";
+    const resultado  = d.ventasBase - d.gastosBase - d.nominasCoste;
+    const retGasLabel = esAlquiler ? "Mod.115 19%" : (d.gastosRetencion>0 ? "Mod.111" : "—");
+    return `<tr style="${esAlquiler?"background:#ecfeff":""}">
+      <td style="font-weight:700;border-left:3px solid ${esAlquiler?"#0e7490":"#3b82f6"}">${d.actividad}${esAlquiler?" <small style='color:#0e7490'>(arrendamiento)</small>":""}</td>
+      <td style="text-align:center">${d.nVentas+d.nGastos}</td>
+      <td style="text-align:right;color:#15803d;font-family:monospace;font-weight:700">${d.ventasBase>0?fmtN(d.ventasBase)+" €":"—"}</td>
+      <td style="text-align:right;color:#1d4ed8;font-family:monospace">${d.ventasIVA>0?"+"+fmtN(d.ventasIVA+(d.ventasRecargo||0))+" €":"—"}</td>
+      <td style="text-align:right;color:#b45309;font-family:monospace">${d.ventasRetencion>0?"-"+fmtN(d.ventasRetencion)+" €":"—"}</td>
+      <td style="text-align:right;font-family:monospace;font-weight:800">${d.ventasBase>0?fmtN(d.ventasBase+d.ventasIVA+(d.ventasRecargo||0)-d.ventasRetencion)+" €":"—"}</td>
+      <td style="text-align:right;color:#dc2626;font-family:monospace">${d.gastosBase>0?fmtN(d.gastosBase)+" €":"—"}</td>
+      <td style="text-align:right;color:#0369a1;font-family:monospace">${d.gastosIVA>0?"-"+fmtN(d.gastosIVA)+" €":"—"}</td>
+      <td style="text-align:right;color:#7e22ce;font-family:monospace;font-size:7.5px">${d.gastosRetencion>0?"-"+fmtN(d.gastosRetencion)+" € "+retGasLabel:"—"}</td>
+      <td style="text-align:right;color:#dc2626;font-family:monospace;font-weight:800">${d.gastosBase>0?fmtN(d.gastosBase+d.gastosIVA-d.gastosRetencion)+" €":"—"}</td>
+      <td style="text-align:right;font-family:monospace;font-weight:900;color:${resultado>=0?"#15803d":"#dc2626"}">${resultado>=0?"+":""}${fmtN(resultado)} €</td>
+    </tr>`;
+  }).join("");
+
+  const totResultado = totales.ventasBase - totales.gastosBase - totales.nominasCoste;
+
+  // Listado facturas por actividad
+  const porAct = {};
+  factsFil.forEach(f => {
+    const act = f.actividad || "Sin actividad";
+    if (!porAct[act]) porAct[act] = { ventas:[], gastos:[] };
+    if (f.tipo === "venta") porAct[act].ventas.push(f);
+    else porAct[act].gastos.push(f);
+  });
+
+  const listaFacturas = Object.entries(porAct).sort((a,b)=>a[0].localeCompare(b[0])).map(([act, grp]) => {
+    const esAlq = act.toLowerCase() === "alquiler";
+    const rows = [...grp.ventas.map(f => {
+      const t = calcFacturaReal(f);
+      return `<tr>
+        <td style="color:#059669;font-weight:700;font-size:7px">INGRESO</td>
+        <td style="font-size:7px;color:#94a3b8">${f.numero||f.id||"—"}</td>
+        <td>${(f.fecha||"").split("T")[0]}</td>
+        <td style="max-width:200px">${f.clienteNombre||f.cliente_nombre||"—"}</td>
+        <td style="text-align:right;color:#15803d;font-family:monospace">${fmtN(t.totalBase)} €</td>
+        <td style="text-align:right;color:#1d4ed8;font-family:monospace">${t.totalIVA>0?"+"+fmtN(t.totalIVA)+" €":"—"}</td>
+        <td style="text-align:right;color:#b45309;font-family:monospace">${t.totalRetencion>0?"-"+fmtN(t.totalRetencion)+" €":"—"}</td>
+        <td style="text-align:right;font-family:monospace;font-weight:800">${fmtN(t.total)} €</td>
+      </tr>`;
+    }), ...grp.gastos.map(f => {
+      const t = calcFacturaReal(f);
+      const retLabel = esAlq ? "Mod.115" : (t.totalRetencion>0?"Mod.111":"—");
+      return `<tr style="background:#fff5f5">
+        <td style="color:#dc2626;font-weight:700;font-size:7px">GASTO</td>
+        <td style="font-size:7px;color:#94a3b8">${f.numero||f.id||"—"}</td>
+        <td>${(f.fecha||"").split("T")[0]}</td>
+        <td style="max-width:200px">${f.proveedorNombre||f.proveedor_nombre||f.clienteNombre||f.cliente_nombre||"—"}</td>
+        <td style="text-align:right;color:#dc2626;font-family:monospace">${fmtN(t.totalBase)} €</td>
+        <td style="text-align:right;color:#0369a1;font-family:monospace">${t.totalIVA>0?"-"+fmtN(t.totalIVA)+" €":"—"}</td>
+        <td style="text-align:right;color:#7e22ce;font-family:monospace">${t.totalRetencion>0?"-"+fmtN(t.totalRetencion)+" ("+retLabel+")":"—"}</td>
+        <td style="text-align:right;color:#dc2626;font-family:monospace;font-weight:800">-${fmtN(t.totalBase+t.totalIVA-t.totalRetencion)} €</td>
+      </tr>`;
+    })].join("");
+    if (!rows) return "";
+    return `<tr style="background:#1e293b"><td colspan="8" style="padding:4px 8px;color:#fff;font-weight:900;font-size:8.5px">${act}${esAlq?" — Arrendamiento · Mod.115 art.69 RIRPF":""}</td></tr>${rows}`;
+  }).join("");
+
+  const css = `
+@page { size:${pageSize}; margin:0; }
+@media print { body { -webkit-print-color-adjust:exact; print-color-adjust:exact; } html { -webkit-print-color-adjust:exact; } }
+body { font-family:'Helvetica Neue',Arial,sans-serif; font-size:${landscape?8.5:8}px; color:#0f172a; margin:${pageMargin}; line-height:1.4; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+.hdr { background:#0f172a; color:#fff; padding:11px 15px; margin-bottom:11px; display:flex; justify-content:space-between; align-items:center; border-radius:5px; }
+.hdr h1 { font-size:13px; font-weight:900; margin:0; }
+.hdr p  { font-size:7.5px; color:rgba(255,255,255,.5); margin:2px 0 0; }
+.badge { background:#059669; color:#fff; padding:2px 9px; border-radius:12px; font-size:7.5px; font-weight:800; text-transform:uppercase; }
+.kpis { display:grid; grid-template-columns:repeat(${landscape?5:3},1fr); gap:6px; margin-bottom:11px; }
+.kpi { border:1px solid #e2e8f0; border-radius:5px; padding:6px 10px; }
+.kpi-l { font-size:6.5px; color:#64748b; text-transform:uppercase; font-weight:700; margin-bottom:2px; }
+.kpi-v { font-size:12px; font-weight:900; font-family:monospace; }
+.g{color:#15803d}.r{color:#dc2626}.b{color:#1d4ed8}.t{color:#0e7490}
+.st { font-size:8px; font-weight:900; text-transform:uppercase; letter-spacing:.07em; margin:12px 0 5px; padding-bottom:2px; border-bottom:2px solid #0f172a; }
+table { width:100%; border-collapse:collapse; font-size:${landscape?8:7.5}px; margin-bottom:12px; }
+thead th { background:#1e293b; color:#fff; padding:4px 7px; text-align:left; font-size:7px; font-weight:700; text-transform:uppercase; }
+thead th:not(:first-child):not(:nth-child(2)) { text-align:right; }
+tbody td { padding:3px 7px; border-bottom:1px solid #f1f5f9; }
+tbody tr:hover { background:#f8fafc; }
+.tot td { background:#0f172a!important; color:#fff; font-family:monospace; font-weight:900; padding:5px 7px; border:none; }
+.aviso { background:#f0fdf4; border:1px solid #bbf7d0; border-radius:4px; padding:5px 9px; font-size:7.5px; color:#15803d; margin-bottom:9px; }
+.footer { margin-top:12px; padding:5px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:4px; font-size:7px; color:#94a3b8; text-align:center; }
+`;
+
+  return `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8">
+<title>Desglose Actividades — ${pLabel}</title><style>${css}</style></head><body>
+<div class="hdr">
+  <div><h1>Desglose por Actividad Económica</h1>
+  <p>${empresa||"Autónomo"}${nif?" · NIF: "+nif:""} · Período: ${pLabel} · ${now}</p></div>
+  <span class="badge">Para gestoría</span>
+</div>
+<div class="aviso">Documento de ingresos y gastos por actividad para entrega a gestoría. No incluye estimaciones de modelos AEAT — esas las calcula el asesor fiscal.</div>
+<div class="kpis">
+  <div class="kpi"><div class="kpi-l">Ingresos (base imponible)</div><div class="kpi-v g">+${fmtN(totales.ventasBase)} €</div></div>
+  <div class="kpi"><div class="kpi-l">IVA repercutido total</div><div class="kpi-v b">+${fmtN(totales.ventasIVA+(totales.ventasRecargo||0))} €</div></div>
+  <div class="kpi"><div class="kpi-l">Gastos deducibles (base)</div><div class="kpi-v r">-${fmtN(totales.gastosBase+totales.nominasCoste)} €</div></div>
+  <div class="kpi"><div class="kpi-l">IVA soportado total</div><div class="kpi-v" style="color:#0369a1">-${fmtN(totales.gastosIVA)} €</div></div>
+  <div class="kpi"><div class="kpi-l">Rendimiento neto estimado</div><div class="kpi-v ${totResultado>=0?"g":"r"}">${totResultado>=0?"+":""}${fmtN(totResultado)} €</div></div>
+</div>
+<div class="st">Resumen por actividad — ${pLabel}</div>
+<table>
+  <thead><tr>${cols.map(h=>`<th>${h}</th>`).join("")}</tr></thead>
+  <tbody>
+    ${filasAct}
+    <tr class="tot">
+      <td>TOTALES</td><td style="text-align:center">${totales.nVentas+totales.nGastos}</td>
+      <td style="text-align:right">${fmtN(totales.ventasBase)} €</td>
+      <td style="text-align:right">${fmtN(totales.ventasIVA+(totales.ventasRecargo||0))} €</td>
+      <td style="text-align:right">${fmtN(totales.ventasRetencion)} €</td>
+      <td style="text-align:right">${fmtN(totales.ventasBase+totales.ventasIVA+(totales.ventasRecargo||0)-totales.ventasRetencion)} €</td>
+      <td style="text-align:right">${fmtN(totales.gastosBase)} €</td>
+      <td style="text-align:right">${fmtN(totales.gastosIVA)} €</td>
+      <td style="text-align:right">${fmtN(totales.gastosRetencion||0)} €</td>
+      <td style="text-align:right">${fmtN(totales.gastosBase+totales.gastosIVA-(totales.gastosRetencion||0))} €</td>
+      <td style="text-align:right;font-size:11px;color:${totResultado>=0?"#34d399":"#fca5a5"}">${totResultado>=0?"+":""}${fmtN(totResultado)} €</td>
+    </tr>
+  </tbody>
+</table>
+<div class="st">Listado de facturas por actividad — ${pLabel}</div>
+<table>
+  <thead><tr><th>Tipo</th><th>Número</th><th>Fecha</th><th>Cliente / Proveedor</th><th>Base imponible</th><th>IVA / Cuota</th><th>Ret. e ingreso a cta.</th><th>Total</th></tr></thead>
+  <tbody>${listaFacturas}</tbody>
+</table>
+<div class="footer">ContaAuto · Solo desglose actividades ${landscape?"horizontal":"vertical"} · ${now} · Nomenclatura AEAT: base imponible (art.78 LIVA) · cuota de IVA (art.90 LIVA) · retención e ingreso a cuenta (art.69/76 RIRPF) · Sin estimaciones fiscales · No sustituye asesoramiento profesional</div>
+</body></html>`;
+}
+
+
 // ════════════════════════════════════════════════════════════
 // VISTA INFORME GESTORÍA
 // ════════════════════════════════════════════════════════════
@@ -4499,11 +4644,14 @@ function VistaInformeGestoria({ facturas, nominas, actividades }) {
     downloadPDF(html, "informe-gestoria-" + pLabel.replace(/ /g,"-").toLowerCase() + ".pdf");
   };
 
-  // Nuevos handlers — informe desglosado y fiscal solo
+  // Handlers — desglose con/sin fiscal + resumen horizontal
   const handleDesglosadoV  = () => downloadPDF(buildInformeDesglosadoHTML(data, factsFil, pLabel, empDef.nombre, empDef.nif, irpf111Nom, irpf115Gest, false), `desglose-vertical-${pLabel.replace(/ /g,"-")}.pdf`);
   const handleDesglosadoH  = () => downloadPDF(buildInformeDesglosadoHTML(data, factsFil, pLabel, empDef.nombre, empDef.nif, irpf111Nom, irpf115Gest, true),  `desglose-horizontal-${pLabel.replace(/ /g,"-")}.pdf`);
   const handleFiscalV      = () => downloadPDF(buildInformeFiscalSoloHTML(data, pLabel, empDef.nombre, empDef.nif, irpf111Nom, irpf115Gest, false), `fiscal-vertical-${pLabel.replace(/ /g,"-")}.pdf`);
   const handleFiscalH      = () => downloadPDF(buildInformeFiscalSoloHTML(data, pLabel, empDef.nombre, empDef.nif, irpf111Nom, irpf115Gest, true),  `fiscal-horizontal-${pLabel.replace(/ /g,"-")}.pdf`);
+  // Solo desglose actividades SIN estimaciones fiscales — para entregar a gestoría
+  const handleSoloActV     = () => downloadPDF(buildResumenActividadesSinFiscalHTML(data, factsFil, pLabel, empDef.nombre, empDef.nif, false), `actividades-gestoria-vertical-${pLabel.replace(/ /g,"-")}.pdf`);
+  const handleSoloActH     = () => downloadPDF(buildResumenActividadesSinFiscalHTML(data, factsFil, pLabel, empDef.nombre, empDef.nif, true),  `actividades-gestoria-horizontal-${pLabel.replace(/ /g,"-")}.pdf`);
 
   const toggle = (act) => setExpandidas(p => ({...p, [act]: !p[act]}));
   const colorB = (v) => v >= 0 ? "text-emerald-700" : "text-rose-600";
@@ -4536,6 +4684,13 @@ function VistaInformeGestoria({ facturas, nominas, actividades }) {
               <div className="flex gap-1">
                 <button onClick={handleFiscalV} className="px-3 py-2 bg-teal-700 hover:bg-teal-600 rounded-lg text-xs font-bold transition-colors">Vertical</button>
                 <button onClick={handleFiscalH} className="px-3 py-2 bg-teal-600 hover:bg-teal-500 rounded-lg text-xs font-bold transition-colors">Horizontal</button>
+              </div>
+            </div>
+            <div className="flex flex-col gap-1">
+              <div className="text-xs text-white/40 font-bold uppercase tracking-widest">Solo actividades p/gestoría</div>
+              <div className="flex gap-1">
+                <button onClick={handleSoloActV} className="px-3 py-2 bg-violet-700 hover:bg-violet-600 rounded-lg text-xs font-bold transition-colors">Vertical</button>
+                <button onClick={handleSoloActH} className="px-3 py-2 bg-violet-600 hover:bg-violet-500 rounded-lg text-xs font-bold transition-colors">Horizontal</button>
               </div>
             </div>
           </div>
