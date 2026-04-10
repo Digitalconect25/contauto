@@ -4455,8 +4455,14 @@ Exenciones IVA: art.20.1.18 LIVA (Western Union, Ría) · No sustituye asesorami
 // ── Post-procesadores HTML gestoria (no tocan las funciones originales) ──────
 // Elimina la sección "Estimación modelos AEAT" del informe de gestoría
 function stripEstimacionAEAT(html) {
-  // Borra desde <div class="st">Estimación modelos AEAT hasta el siguiente <div class="st">
-  return html.replace(/<div class="st">Estimación modelos AEAT[\s\S]*?(?=<div class="st">)/, "");
+  // Elimina la sección "Estimación modelos AEAT" completa usando indexOf — sin regex
+  // Busca el inicio de la sección AEAT y el inicio de la siguiente sección
+  const INI = '<div class="st">Estimaci\u00f3n modelos AEAT';
+  const FIN = '<div class="st">Desglose por actividad econ\u00f3mica</div>';
+  const i1  = html.indexOf(INI);
+  const i2  = html.indexOf(FIN);
+  if (i1 === -1 || i2 === -1 || i2 <= i1) return html; // seguro: si no encuentra, devuelve intacto
+  return html.slice(0, i1) + html.slice(i2);
 }
 // Convierte el HTML de gestoría (portrait) a landscape cambiando el CSS de @page
 function toGestoriaLandscape(html) {
