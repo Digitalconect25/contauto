@@ -4451,6 +4451,24 @@ Exenciones IVA: art.20.1.18 LIVA (Western Union, Ría) · No sustituye asesorami
 
 
 
+
+// ── Post-procesadores HTML gestoria (no tocan las funciones originales) ──────
+// Elimina la sección "Estimación modelos AEAT" del informe de gestoría
+function stripEstimacionAEAT(html) {
+  // Borra desde <div class="st">Estimación modelos AEAT hasta el siguiente <div class="st">
+  return html.replace(/<div class="st">Estimación modelos AEAT[\s\S]*?(?=<div class="st">)/, "");
+}
+// Convierte el HTML de gestoría (portrait) a landscape cambiando el CSS de @page
+function toGestoriaLandscape(html) {
+  return html
+    .replace(/@page\{size:A4;margin:0\}/, "@page{size:A4 landscape;margin:0}")
+    .replace("padding:16px 20px", "padding:10px 16px")
+    .replace("grid-template-columns:repeat(4,1fr)", "grid-template-columns:repeat(6,1fr)")
+    .replace(/\.kpis\{display:grid;grid-template-columns:repeat\(4,1fr\)/, ".kpis{display:grid;grid-template-columns:repeat(6,1fr)")
+    .replace(".fiscal{display:grid;grid-template-columns:repeat(3,1fr)", ".fiscal{display:grid;grid-template-columns:repeat(4,1fr)")
+    .replace("font-size:11px", "font-size:9.5px");
+}
+
 // ════════════════════════════════════════════════════════════
 // RESUMEN ACTIVIDADES SIN ESTIMACIONES FISCALES (para gestoría)
 // Solo desglose por actividad — sin Mod.303/130/111/115
@@ -4652,6 +4670,11 @@ function VistaInformeGestoria({ facturas, nominas, actividades }) {
   // Solo desglose actividades SIN estimaciones fiscales — para entregar a gestoría
   const handleSoloActV     = () => downloadPDF(buildResumenActividadesSinFiscalHTML(data, factsFil, pLabel, empDef.nombre, empDef.nif, false), `actividades-gestoria-vertical-${pLabel.replace(/ /g,"-")}.pdf`);
   const handleSoloActH     = () => downloadPDF(buildResumenActividadesSinFiscalHTML(data, factsFil, pLabel, empDef.nombre, empDef.nif, true),  `actividades-gestoria-horizontal-${pLabel.replace(/ /g,"-")}.pdf`);
+  // Resumen completo SIN estimaciones AEAT (vertical + horizontal)
+  const handleResumenSinFiscalV = () => { const h = buildInformeGestoriaHTML(data, pLabel, empDef.nombre, empDef.nif, irpf111Nom); downloadPDF(stripEstimacionAEAT(h), `resumen-sin-estimaciones-vertical-${pLabel.replace(/ /g,"-")}.pdf`); };
+  const handleResumenSinFiscalH = () => { const h = buildInformeGestoriaHTML(data, pLabel, empDef.nombre, empDef.nif, irpf111Nom); downloadPDF(toGestoriaLandscape(stripEstimacionAEAT(h)), `resumen-sin-estimaciones-horizontal-${pLabel.replace(/ /g,"-")}.pdf`); };
+  // Resumen completo CON estimaciones AEAT (landscape)
+  const handleResumenComplH = () => { const h = buildInformeGestoriaHTML(data, pLabel, empDef.nombre, empDef.nif, irpf111Nom); downloadPDF(toGestoriaLandscape(h), `resumen-completo-horizontal-${pLabel.replace(/ /g,"-")}.pdf`); };
 
   const toggle = (act) => setExpandidas(p => ({...p, [act]: !p[act]}));
   const colorB = (v) => v >= 0 ? "text-emerald-700" : "text-rose-600";
@@ -4669,28 +4692,44 @@ function VistaInformeGestoria({ facturas, nominas, actividades }) {
             <h2 className="text-xl font-black">Resultados por Actividad — {pLabel}</h2>
             <p className="text-sm text-white/50 mt-0.5">{empDef.nombre || "Autónomo"}{empDef.nif ? " · NIF: " + empDef.nif : ""}</p>
           </div>
-          <div className="flex gap-2 flex-shrink-0 flex-wrap">
-            <button onClick={handlePrint} className="flex items-center gap-2 px-4 py-2.5 bg-white/10 hover:bg-white/20 border border-white/20 rounded-xl text-xs font-bold transition-colors">{Ico.print} Imprimir</button>
-            <button onClick={handlePDF} className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 rounded-xl text-xs font-bold transition-colors shadow-lg">{Ico.pdf} PDF Gestoría</button>
-            <div className="flex flex-col gap-1">
-              <div className="text-xs text-white/40 font-bold uppercase tracking-widest">Desglose actividades</div>
+          {/* Panel de descarga — período activo visible en cada botón */}
+          <div className="bg-white/5 border border-white/10 rounded-xl p-3 space-y-2.5 min-w-72">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-black text-white/60 uppercase tracking-widest">Descargar — {pLabel}</span>
               <div className="flex gap-1">
-                <button onClick={handleDesglosadoV} className="px-3 py-2 bg-emerald-700 hover:bg-emerald-600 rounded-lg text-xs font-bold transition-colors">Vertical</button>
-                <button onClick={handleDesglosadoH} className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-lg text-xs font-bold transition-colors">Horizontal</button>
+                <button onClick={handlePrint} className="px-2.5 py-1.5 bg-white/10 hover:bg-white/20 border border-white/20 rounded-lg text-xs font-bold transition-colors">{Ico.print}</button>
+                <button onClick={handlePDF} className="px-2.5 py-1.5 bg-blue-600 hover:bg-blue-500 rounded-lg text-xs font-bold transition-colors">{Ico.pdf} Completo</button>
+                <button onClick={handleResumenComplH} className="px-2.5 py-1.5 bg-blue-700 hover:bg-blue-600 rounded-lg text-xs font-bold transition-colors">↔ Horizontal</button>
               </div>
             </div>
-            <div className="flex flex-col gap-1">
-              <div className="text-xs text-white/40 font-bold uppercase tracking-widest">Solo fiscal (303/130/111/115)</div>
-              <div className="flex gap-1">
-                <button onClick={handleFiscalV} className="px-3 py-2 bg-teal-700 hover:bg-teal-600 rounded-lg text-xs font-bold transition-colors">Vertical</button>
-                <button onClick={handleFiscalH} className="px-3 py-2 bg-teal-600 hover:bg-teal-500 rounded-lg text-xs font-bold transition-colors">Horizontal</button>
+            <div className="border-t border-white/10 pt-2 space-y-1.5">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs text-white/50 w-36">Resumen sin estimaciones AEAT</span>
+                <div className="flex gap-1">
+                  <button onClick={handleResumenSinFiscalV} className="px-2.5 py-1.5 bg-orange-700 hover:bg-orange-600 rounded-lg text-xs font-bold transition-colors">↕ Vertical</button>
+                  <button onClick={handleResumenSinFiscalH} className="px-2.5 py-1.5 bg-orange-600 hover:bg-orange-500 rounded-lg text-xs font-bold transition-colors">↔ Horizontal</button>
+                </div>
               </div>
-            </div>
-            <div className="flex flex-col gap-1">
-              <div className="text-xs text-white/40 font-bold uppercase tracking-widest">Solo actividades p/gestoría</div>
-              <div className="flex gap-1">
-                <button onClick={handleSoloActV} className="px-3 py-2 bg-violet-700 hover:bg-violet-600 rounded-lg text-xs font-bold transition-colors">Vertical</button>
-                <button onClick={handleSoloActH} className="px-3 py-2 bg-violet-600 hover:bg-violet-500 rounded-lg text-xs font-bold transition-colors">Horizontal</button>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs text-white/50 w-36">Solo actividades p/gestoría</span>
+                <div className="flex gap-1">
+                  <button onClick={handleSoloActV} className="px-2.5 py-1.5 bg-violet-700 hover:bg-violet-600 rounded-lg text-xs font-bold transition-colors">↕ Vertical</button>
+                  <button onClick={handleSoloActH} className="px-2.5 py-1.5 bg-violet-600 hover:bg-violet-500 rounded-lg text-xs font-bold transition-colors">↔ Horizontal</button>
+                </div>
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs text-white/50 w-36">Desglose completo con facturas</span>
+                <div className="flex gap-1">
+                  <button onClick={handleDesglosadoV} className="px-2.5 py-1.5 bg-emerald-700 hover:bg-emerald-600 rounded-lg text-xs font-bold transition-colors">↕ Vertical</button>
+                  <button onClick={handleDesglosadoH} className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded-lg text-xs font-bold transition-colors">↔ Horizontal</button>
+                </div>
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs text-white/50 w-36">Solo modelos AEAT (303/130/111/115)</span>
+                <div className="flex gap-1">
+                  <button onClick={handleFiscalV} className="px-2.5 py-1.5 bg-teal-700 hover:bg-teal-600 rounded-lg text-xs font-bold transition-colors">↕ Vertical</button>
+                  <button onClick={handleFiscalH} className="px-2.5 py-1.5 bg-teal-600 hover:bg-teal-500 rounded-lg text-xs font-bold transition-colors">↔ Horizontal</button>
+                </div>
               </div>
             </div>
           </div>
