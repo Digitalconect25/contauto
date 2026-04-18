@@ -190,10 +190,11 @@ function getPeriodLabel(mode, value, year) {
   if (mode === "trimestre") return `${Q_NAMES[value]} ${year}`;
   return `Año ${year}`;
 }
-function summarizeFacturas(flist) {
+function summarizeFacturas(flist, cuotaRetaTotal = 0) {
   // retencionesSop = IRPF que clientes te retienen en tus ventas → reduce Mod. 130
   // retencionesRep    = IRPF que retienes a profesionales en gastos → Mod. 111
   // retencionesAlquiler = IRPF que retienes sobre alquiler de inmuebles → Mod. 115
+  // cuotaRetaTotal     = suma de cuotas RETA del período (exento IVA, deducible IRPF)
   let ingresos = 0, gastos = 0, ivaRep = 0, ivaSop = 0, retencionesSop = 0, retencionesRep = 0, retencionesAlquiler = 0;
   // Separación para régimen de recargo de equivalencia (art.148-163 LIVA)
   let ingresos303 = 0, gastos303 = 0, ivaRep303 = 0, ivaSop303 = 0;
@@ -233,8 +234,8 @@ function summarizeFacturas(flist) {
       }
     }
   });
-  // Beneficio fiscal: ventas - gastos régimen general - coste mercancía vendida tienda
-  const beneficioFiscal = ingresos - gastos303 - tiendaCoste;
+  // Beneficio fiscal: ventas - gastos régimen general - coste mercancía vendida tienda - cuota RETA
+  const beneficioFiscal = ingresos - gastos303 - tiendaCoste - cuotaRetaTotal;
   return { ingresos, gastos, ivaRep, ivaSop,
     retenciones: retencionesSop, // alias legacy para Mod. 130
     retencionesSop, retencionesRep, retencionesAlquiler,
@@ -245,8 +246,9 @@ function summarizeFacturas(flist) {
     tiendaVentas, tiendaIVAInfo, tiendaCoste,
     tiendaCompras, tiendaIVAGas, tiendaRecGas,
     nTienda, beneficioFiscal,
-    // Gastos fiscalmente reconocidos (para KPIs/Mod.130)
-    gastosFiscales: gastos303 + tiendaCoste,
+    cuotaRetaTotal,
+    // Gastos fiscalmente reconocidos (para KPIs/Mod.130), incluye RETA
+    gastosFiscales: gastos303 + tiendaCoste + cuotaRetaTotal,
   };
 }
 function summarizeNominas(nlist) {
@@ -610,6 +612,18 @@ function getEmpresaDefaults() {
 }
 function setEmpresaDefaults(d) {
   try { localStorage.setItem(EMPRESA_KEY, JSON.stringify(d)); } catch { /* noop */ }
+}
+// Calcula la cuota RETA (Seguridad Social de autónomos) correspondiente al período seleccionado.
+// Devuelve { meses, importeMensual, importeTotal }. Meses según modo (mes=1, trimestre=3, año=12).
+// No lleva IVA (art. 20.Uno.12 LIVA — exento). Es gasto deducible en IRPF (art. 30 LIRPF).
+function calcCuotaReta(mode, value, year) {
+  const cfg = getEmpresaDefaults();
+  const importeMensual = parseFloat(cfg.cuotaReta || 0) || 0;
+  if (importeMensual <= 0) return { meses: 0, importeMensual: 0, importeTotal: 0 };
+  let meses = 1;
+  if (mode === "trimestre") meses = 3;
+  else if (mode === "anual" || mode === "año" || mode === "anio") meses = 12;
+  return { meses, importeMensual, importeTotal: importeMensual * meses };
 }
 
 async function callAI({ messages, max_tokens = 2000, model = "claude-sonnet-4-20250514" }) {
@@ -1675,6 +1689,7 @@ function FacturaEmitidaForm({ actividades, facturas, onSave, onCancel, initial, 
     if (!f.cliente.trim()){ alert("Cliente obligatorio."); return; }
     if (!f.fecha)         { alert("Fecha obligatoria."); return; }
     setEmpresaDefaults({
+      ...(getEmpresaDefaults()),
       nombre: f.empresaNombre, nif: f.empresaNif, direccion: f.empresaDireccion,
       telefono: f.empresaTelefono, email: f.empresaEmail,
       iban: f.ibanEmpresa, banco: f.bancoEmpresa,
@@ -3423,7 +3438,9 @@ function buildResumenContablePrintHTML({ pLabel, qLabel, resF, resN, gastosTotal
 function Dashboard({ facturas, nominas, trabajadores, periodMode, periodValue, periodYear }) {
   const factP = useMemo(() => facturas.filter(f => matchesPeriod(f,periodMode,periodValue,periodYear)), [facturas,periodMode,periodValue,periodYear]);
   const nomiP = useMemo(() => nominas.filter(n => matchesPeriod(n,periodMode,periodValue,periodYear)), [nominas,periodMode,periodValue,periodYear]);
-  const resF  = useMemo(() => summarizeFacturas(factP), [factP]);
+  // Cuota RETA del período seleccionado (configurable en ajustes de empresa)
+  const retaP = useMemo(() => calcCuotaReta(periodMode, periodValue, periodYear), [periodMode, periodValue, periodYear]);
+  const resF  = useMemo(() => summarizeFacturas(factP, retaP.importeTotal), [factP, retaP]);
   const resN  = useMemo(() => summarizeNominas(nomiP), [nomiP]);
   const pLabel = getPeriodLabel(periodMode,periodValue,periodYear);
 
@@ -3438,7 +3455,8 @@ function Dashboard({ facturas, nominas, trabajadores, periodMode, periodValue, p
   const qIdx  = periodMode==="trimestre" ? periodValue : Math.floor(new Date().getMonth()/3);
   const factsQ = useMemo(() => facturas.filter(f=>{const d=new Date(f.fecha);return Math.floor(d.getMonth()/3)===qIdx&&d.getFullYear()===periodYear;}), [facturas,qIdx,periodYear]);
   const nomiQ  = useMemo(() => nominas.filter(n=>{const d=new Date(n.fecha);return Math.floor(d.getMonth()/3)===qIdx&&d.getFullYear()===periodYear;}), [nominas,qIdx,periodYear]);
-  const qF     = useMemo(() => summarizeFacturas(factsQ), [factsQ]);
+  const retaQ  = useMemo(() => calcCuotaReta("trimestre", qIdx, periodYear), [qIdx, periodYear]);
+  const qF     = useMemo(() => summarizeFacturas(factsQ, retaQ.importeTotal), [factsQ, retaQ]);
   const qN     = useMemo(() => summarizeNominas(nomiQ), [nomiQ]);
   // Mod.303: EXCLUYE tienda (recargo equivalencia). ivaLiquidar303 = ivaRep303 - ivaSop303.
   const ivaAPagar   = qF.ivaLiquidar303;
@@ -3501,13 +3519,18 @@ function Dashboard({ facturas, nominas, trabajadores, periodMode, periodValue, p
         <Divider label={`Resumen consolidado - ${pLabel}`}/>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <KPI label="Ingresos (base)" value={fmt(resF.ingresos)} sub={`${factP.filter(f=>f.tipo==="venta").length} ventas`} tint="green"/>
-          <KPI label="Gastos deducibles" value={fmt((resF.gastosFiscales ?? resF.gastos) + resN.totalCoste)} sub={(resF.nTienda||0)>0 ? `incluye coste mercancía tienda` : `${factP.filter(f=>f.tipo==="gasto").length} gastos`} tint="red"/>
+          <KPI label="Gastos deducibles" value={fmt((resF.gastosFiscales ?? resF.gastos) + resN.totalCoste)} sub={(resF.nTienda||0)>0 ? `con coste merc. + RETA ${retaP.meses}m` : (resF.cuotaRetaTotal>0 ? `con RETA ${retaP.meses}m` : `${factP.filter(f=>f.tipo==="gasto").length} gastos`)} tint="red"/>
           <KPI label="Coste nóminas" value={fmt(resN.totalCoste)} sub={`${nomiP.length} nóminas`} tint="violet"/>
           <KPI label="Resultado fiscal" value={fmt((resF.beneficioFiscal ?? (resF.ingresos - resF.gastos)) - resN.totalCoste)} sub="Rendimiento neto IRPF" accent/>
         </div>
-        {(resF.nTienda||0)>0 && (
-          <div className="mt-2 text-xs text-violet-800 bg-violet-50 border border-violet-200 rounded-lg px-3 py-2">
-            <span className="font-bold">Tienda (recargo equivalencia).</span> Beneficio fiscal = ventas {fmt(resF.tiendaVentas||0)} - coste mercancía vendida {fmt(resF.tiendaCoste||0)} = {fmt((resF.tiendaVentas||0)-(resF.tiendaCoste||0))}. No declara IVA en Mod.303.
+        {((resF.nTienda||0)>0 || (resF.cuotaRetaTotal||0)>0) && (
+          <div className="mt-2 text-xs text-violet-800 bg-violet-50 border border-violet-200 rounded-lg px-3 py-2 space-y-0.5">
+            {(resF.nTienda||0)>0 && (
+              <div><span className="font-bold">Tienda (recargo equiv.):</span> ventas {fmt(resF.tiendaVentas||0)} - coste mercancía {fmt(resF.tiendaCoste||0)} = beneficio {fmt((resF.tiendaVentas||0)-(resF.tiendaCoste||0))}</div>
+            )}
+            {(resF.cuotaRetaTotal||0)>0 && (
+              <div><span className="font-bold">Cuota RETA:</span> {retaP.meses} mes{retaP.meses!==1?"es":""} × {fmt(retaP.importeMensual)} = {fmt(resF.cuotaRetaTotal)} (deducible IRPF · exento IVA)</div>
+            )}
           </div>
         )}
       </div>
@@ -3642,6 +3665,7 @@ function Dashboard({ facturas, nominas, trabajadores, periodMode, periodValue, p
               <div className="flex justify-between"><span className="text-gray-600">Ingresos netos</span><span className="font-semibold font-mono">{fmt(qF.ingresos)}</span></div>
               <div className="flex justify-between"><span className="text-gray-600">Gastos deducibles</span><span className="font-semibold font-mono text-rose-600">-{fmt((qF.gastosFiscales ?? qF.gastos) + qN.totalCoste)}</span></div>
               {(qF.nTienda||0)>0 && <div className="text-xs text-violet-700">Incluye coste mercancía tienda: {fmt(qF.tiendaCoste||0)}</div>}
+              {(qF.cuotaRetaTotal||0)>0 && <div className="text-xs text-purple-700">Incluye cuota RETA: {fmt(qF.cuotaRetaTotal)} (3 meses)</div>}
               <div className="flex justify-between"><span className="text-gray-600">Rendimiento neto</span><span className="font-semibold font-mono">{fmt(rendNeto)}</span></div>
               <div className="flex justify-between"><span className="text-gray-600">20% s/ rendimiento</span><span className="font-semibold font-mono">{fmt(rendNeto * 0.20)}</span></div>
               {qF.retencionesSop > 0 && <div className="flex justify-between"><span className="text-gray-600">Retenciones soportadas</span><span className="font-semibold font-mono text-rose-600">-{fmt(qF.retencionesSop)}</span></div>}
@@ -4028,6 +4052,14 @@ function calcInformeActividades(facturas, nominas, mode, value, year) {
   const factsFil = filtrar(facturas);
   const nomisFil = filtrar(nominas);
   const mapa = {};
+  // Libro de IVA por actividad × tipo impositivo (para cuadre del Mod.303)
+  // Estructura: { actividad: { "21": {baseV, cuotaV, baseG, cuotaG, recV, recG}, "10": {...}, ... } }
+  const libroIVA = {};
+  const getLibro = (act, tipo) => {
+    if (!libroIVA[act]) libroIVA[act] = {};
+    if (!libroIVA[act][tipo]) libroIVA[act][tipo] = { baseV:0, cuotaV:0, recV:0, baseG:0, cuotaG:0, recG:0 };
+    return libroIVA[act][tipo];
+  };
   const getAct = (act) => {
     if (!mapa[act]) mapa[act] = {
       actividad: act,
@@ -4083,6 +4115,24 @@ function calcInformeActividades(facturas, nominas, mode, value, year) {
         recargoEq.gastosTotal   += t.total;
         recargoEq.nGastos++;
       }
+    }
+    // Libro IVA por actividad × tipo impositivo (solo para Mod.303, no tienda)
+    if (!enRecargo) {
+      const recargoGlobal = f.aplicarRecargo || f.aplicar_recargo || false;
+      (f.lineas || []).forEach(l => {
+        const c = calcLinea(l, recargoGlobal);
+        const tipo = l.exento ? "exento" : String(parseInt(l.tipoIVA || l.iva || 0));
+        const ref = getLibro(act, tipo);
+        if (f.tipo === "venta") {
+          ref.baseV  += c.baseConDesc;
+          ref.cuotaV += c.ivaAmt;
+          ref.recV   += c.recargoAmt;
+        } else {
+          ref.baseG  += c.baseConDesc;
+          ref.cuotaG += c.ivaAmt;
+          ref.recG   += c.recargoAmt;
+        }
+      });
     }
   });
   if (nomisFil.length > 0) {
@@ -4151,16 +4201,26 @@ function calcInformeActividades(facturas, nominas, mode, value, year) {
   fiscal303.ivaLiquidar = fiscal303.ventasIVA + fiscal303.ventasRecargo - fiscal303.gastosIVA - fiscal303.gastosRecargo;
   tot.fiscal303 = fiscal303;
   tot.recargoEq = recargoEq;
+  // Cuota RETA (autónomo) del período: gasto deducible en IRPF sin IVA (exento art.20.Uno.12 LIVA)
+  const reta = calcCuotaReta(mode, value, year);
+  tot.cuotaReta = reta; // { meses, importeMensual, importeTotal }
   // Gastos deducibles FISCALES (para IRPF y KPIs): las compras de tienda se reemplazan
   // por el coste de mercancía vendida, que es lo realmente reconocido como gasto del período.
-  tot.gastosFiscales = (tot.gastosBase - recargoEq.gastosBase) + recargoEq.costeMercancia + tot.nominasCoste;
+  // La cuota RETA se suma como gasto deducible adicional (art.30.2 LIRPF).
+  tot.gastosFiscales = (tot.gastosBase - recargoEq.gastosBase) + recargoEq.costeMercancia + tot.nominasCoste + reta.importeTotal;
+  // Ajuste del beneficio bruto: restar la cuota RETA al resultado consolidado (afecta a Mod.130)
+  tot.beneficioBruto -= reta.importeTotal;
+  // Mod.130 CONSOLIDADO según art.110.3 RIRPF (criterio AEAT oficial):
+  //   Rendimiento neto acumulado = Ingresos - Gastos deducibles (incl. coste mercancía tienda + nóminas + RETA)
+  //   Pago fraccionado = max(0, 20% × Rendimiento neto - Retenciones IRPF soportadas)
+  tot.mod130Consolidado = Math.max(0, tot.beneficioBruto * 0.20 - tot.ventasRetencion);
   // Coherencia: ventasBase - gastosFiscales = beneficioBruto consolidado
-  return { actividades: actividades.sort((a,b) => b.ventasBase - a.ventasBase), totales: tot };
+  return { actividades: actividades.sort((a,b) => b.ventasBase - a.ventasBase), totales: tot, libroIVA };
 }
 
-function buildInformeGestoriaHTML(data, pLabel, empresaNombre, empresaNif, irpf111Nom, sinFiscal = false) {
+function buildInformeGestoriaHTML(data, pLabel, empresaNombre, empresaNif, irpf111Nom, sinFiscal = false, irpf115 = 0) {
   const now = new Date().toLocaleDateString("es-ES", { day:"2-digit", month:"long", year:"numeric" });
-  const { actividades, totales } = data;
+  const { actividades, totales, libroIVA = {} } = data;
   const fmtN = v => (v||0).toLocaleString("es-ES", { minimumFractionDigits:2, maximumFractionDigits:2 });
   const filaActRecargo = (d) => `
   <tr>
@@ -4242,8 +4302,11 @@ thead th:not(:first-child){text-align:right}tbody td{padding:5px 9px;border-bott
 <div class="aviso">Documento orientativo para facilitar la declaración. El asesor fiscal es responsable de la presentación oficial.</div>
 <div class="kpis">
   <div class="kpi"><div class="kpi-lbl">Ingresos (base)</div><div class="kpi-val g">+${fmtN(totales.ventasBase)} €</div></div>
-  <div class="kpi"><div class="kpi-lbl">Gastos deducibles</div><div class="kpi-val r">-${fmtN(totales.gastosFiscales ?? (totales.gastosBase+totales.nominasCoste))} €</div></div>
-  <div class="kpi"><div class="kpi-lbl">Resultado neto</div><div class="kpi-val ${totales.beneficioBruto>=0?"g":"r"}">${totales.beneficioBruto>=0?"+":""}${fmtN(totales.beneficioBruto)} €</div></div>
+  <div class="kpi"><div class="kpi-lbl">Gastos rég.general</div><div class="kpi-val r">-${fmtN((totales.fiscal303?.gastosBase ?? totales.gastosBase))} €</div></div>
+  ${(totales.recargoEq?.nVentas||0)>0?`<div class="kpi"><div class="kpi-lbl">Coste mercancía tienda</div><div class="kpi-val r">-${fmtN(totales.recargoEq.costeMercancia)} €</div></div>`:""}
+  ${(totales.cuotaReta?.importeTotal||0)>0?`<div class="kpi"><div class="kpi-lbl">Cuota RETA (${totales.cuotaReta.meses}m)</div><div class="kpi-val r">-${fmtN(totales.cuotaReta.importeTotal)} €</div></div>`:""}
+  ${totales.nominasCoste>0?`<div class="kpi"><div class="kpi-lbl">Coste nóminas</div><div class="kpi-val r">-${fmtN(totales.nominasCoste)} €</div></div>`:""}
+  <div class="kpi"><div class="kpi-lbl">Resultado fiscal</div><div class="kpi-val ${totales.beneficioBruto>=0?"g":"r"}">${totales.beneficioBruto>=0?"+":""}${fmtN(totales.beneficioBruto)} €</div></div>
   <div class="kpi"><div class="kpi-lbl">IVA neto (Mod.303)</div><div class="kpi-val b">${fmtN(totales.fiscal303?.ivaLiquidar ?? totales.ivaLiquidar)} €</div></div>
 </div>
 ${sinFiscal ? "" : `<div class="st">Estimación modelos AEAT — ${pLabel}</div>
@@ -4252,22 +4315,134 @@ ${sinFiscal ? "" : `<div class="st">Estimación modelos AEAT — ${pLabel}</div>
     <div class="fval" style="color:${(totales.fiscal303?.ivaLiquidar ?? totales.ivaLiquidar)>=0?"#dc2626":"#15803d"}">${fmtN(Math.abs(totales.fiscal303?.ivaLiquidar ?? totales.ivaLiquidar))} €</div>
     <div class="fdet">Rep. ${fmtN((totales.fiscal303?.ventasIVA ?? totales.ventasIVA)+((totales.fiscal303?.ventasRecargo ?? totales.ventasRecargo)||0))} € - Sop. ${fmtN((totales.fiscal303?.gastosIVA ?? totales.gastosIVA)+((totales.fiscal303?.gastosRecargo ?? totales.gastosRecargo)||0))} €${(totales.fiscal303?.ivaLiquidar ?? totales.ivaLiquidar)<0?" → A devolver":""}${(totales.recargoEq?.nVentas||0)>0?"<br><span style=\"color:#7e22ce;font-weight:700\">Excluida tienda (recargo eq.)</span>":""}</div>
   </div>
-  <div class="fbox"><div class="fmod">Mod. 130 — IRPF fraccionado</div>
-    <div class="fval" style="color:#b45309">${fmtN(totales.irpfFraccionado)} €</div>
-    <div class="fdet">Suma IRPF por actividad (art.110.3 RIRPF)<br>Rendimiento neto: ${fmtN(totales.beneficioBruto)} € · Retenciones soportadas: ${fmtN(totales.ventasRetencion)} €</div>
+  <div class="fbox"><div class="fmod">Mod. 130 — IRPF fraccionado (AEAT)</div>
+    <div class="fval" style="color:#b45309">${fmtN(totales.mod130Consolidado ?? totales.irpfFraccionado)} €</div>
+    <div class="fdet">Art.110.3 RIRPF: 20% × ${fmtN(Math.max(0,totales.beneficioBruto))} € - Ret.soportadas ${fmtN(totales.ventasRetencion)} €<br><span style="font-size:7.5px;color:#94a3b8">Suma por actividad: ${fmtN(totales.irpfFraccionado)} €</span></div>
   </div>
   <div class="fbox"><div class="fmod">Mod. 111 — Retenciones</div>
-    <div class="fval" style="color:#7e22ce">${fmtN(irpf111Nom)} €</div>
-    <div class="fdet">IRPF nóminas + profesionales externos<br>SS total TGSS: ${fmtN((totales.nominasSSTrab||0)+(totales.nominasSSEmp||0))} €</div>
+    <div class="fval" style="color:#7e22ce">${fmtN(irpf111Nom + (totales.gastosRetencion||0))} €</div>
+    <div class="fdet">Nóminas: ${fmtN(irpf111Nom)} € · Profesionales: ${fmtN(totales.gastosRetencion||0)} €${(totales.nominasSSTrab||0)+(totales.nominasSSEmp||0)>0?`<br>SS total TGSS: ${fmtN((totales.nominasSSTrab||0)+(totales.nominasSSEmp||0))} €`:""}</div>
   </div>
+  ${irpf115>0?`<div class="fbox"><div class="fmod">Mod. 115 — Arrendamiento</div>
+    <div class="fval" style="color:#0e7490">${fmtN(irpf115)} €</div>
+    <div class="fdet">Retención 19% sobre alquileres (art.69 RIRPF)<br>Base: ${fmtN(actividades.find(d=>d.actividad.toLowerCase()==="alquiler")?.gastosBase||0)} €</div>
+  </div>`:""}
 </div>`}
 <div class="st">Desglose por actividad económica</div>
 <table><thead><tr><th style="width:21%">Actividad</th><th style="width:31%">Concepto</th><th style="width:30%;text-align:right">Importe</th><th style="width:18%;text-align:right">Detalle</th></tr></thead>
 <tbody>${actividades.map(d=>filaAct(d)).join("")}
+${(totales.cuotaReta?.importeTotal||0)>0?`
+<tr style="background:#faf5ff">
+  <td rowspan="2" style="background:#faf5ff;font-weight:700;font-size:12px;color:#0f172a;vertical-align:top;padding:10px 12px;border-left:4px solid #9333ea">Seguridad Social<div style="font-size:8px;color:#9333ea;font-weight:500;margin-top:2px;text-transform:uppercase;letter-spacing:.05em">Cuota RETA autónomo</div></td>
+  <td class="lbl">Cuota Seg. Social (${totales.cuotaReta.meses} mes${totales.cuotaReta.meses!==1?"es":""})</td>
+  <td class="num red">-${fmtN(totales.cuotaReta.importeTotal)} €</td>
+  <td class="num" style="font-size:9px;color:#9333ea">${fmtN(totales.cuotaReta.importeMensual)} €/mes</td>
+</tr>
+<tr style="background:#faf5ff">
+  <td class="lbl" style="font-size:9px;color:#7e22ce">Deducible IRPF · Exento IVA</td>
+  <td class="num" style="font-size:9px;color:#64748b" colspan="2">Art.30.2 LIRPF · Art.20.Uno.12 LIVA</td>
+</tr>
+<tr><td colspan="3" style="height:6px;background:transparent;border:none"></td></tr>`:""}
 <tr class="total-row"><td>TOTALES</td><td>Resultado consolidado ${pLabel}</td>
   <td class="num">${totales.beneficioBruto>=0?"+":""}${fmtN(totales.beneficioBruto)} €</td>
-  <td class="num" style="font-size:9.5px">${totales.nVentas} vtas / ${totales.nGastos} gtos</td></tr>
+  <td class="num" style="font-size:9.5px">${totales.nVentas} vtas / ${totales.nGastos} gtos${(totales.cuotaReta?.meses||0)>0?` / RETA×${totales.cuotaReta.meses}`:""}</td></tr>
 </tbody></table>
+<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:9px 12px;margin-bottom:14px;font-size:10px">
+  <div style="font-weight:900;color:#0f172a;margin-bottom:4px;text-transform:uppercase;letter-spacing:.05em;font-size:9px">Cuadre fiscal del resultado</div>
+  <div style="font-family:monospace;color:#475569;line-height:1.7">
+    Ingresos totales (base): <b style="color:#15803d">+${fmtN(totales.ventasBase)} €</b><br>
+    (-) Gastos rég.general (base): <b style="color:#dc2626">-${fmtN((totales.fiscal303?.gastosBase ?? totales.gastosBase))} €</b>${(totales.recargoEq?.nVentas||0)>0?`<br>
+    (-) Coste mercancía tienda (art.148-163 LIVA): <b style="color:#dc2626">-${fmtN(totales.recargoEq.costeMercancia)} €</b>`:""}${(totales.cuotaReta?.importeTotal||0)>0?`<br>
+    (-) Cuota RETA <span style="font-size:8.5px;color:#7e22ce">(${totales.cuotaReta.meses} × ${fmtN(totales.cuotaReta.importeMensual)} €/mes · art.30.2 LIRPF · exento art.20.Uno.12 LIVA)</span>: <b style="color:#dc2626">-${fmtN(totales.cuotaReta.importeTotal)} €</b>`:""}${totales.nominasCoste>0?`<br>
+    (-) Coste nóminas (SS empresa + bruto): <b style="color:#dc2626">-${fmtN(totales.nominasCoste)} €</b>`:""}<br>
+    <span style="border-top:1px solid #cbd5e1;display:inline-block;min-width:100%;padding-top:3px;margin-top:3px">= Resultado fiscal (rendimiento neto IRPF): <b style="color:${totales.beneficioBruto>=0?"#15803d":"#dc2626"};font-size:11px">${totales.beneficioBruto>=0?"+":""}${fmtN(totales.beneficioBruto)} €</b></span>
+  </div>
+</div>
+<div class="st">Libro de IVA desglosado por actividad y tipo impositivo</div>
+<div style="font-size:9px;color:#64748b;margin-bottom:6px">Detalle de bases y cuotas por actividad económica y tipo de IVA (21% / 10% / 4% / 0% exento), con cuadre por totales. Base para declaración Mod.303 (art.71 LIVA).</div>
+${(() => {
+  const tipos = ["21","10","4","0","exento"];
+  const tiposLabel = { "21":"IVA 21%", "10":"IVA 10%", "4":"IVA 4%", "0":"IVA 0%", "exento":"Exento" };
+  const actsOrdenadas = actividades.filter(a => !esActividadEnRecargo(a.actividad) && libroIVA[a.actividad]).sort((a,b)=>b.ventasBase-a.ventasBase);
+  const tiposUsados = new Set();
+  actsOrdenadas.forEach(a => {
+    const reg = libroIVA[a.actividad] || {};
+    tipos.forEach(t => { if (reg[t] && (reg[t].baseV>0||reg[t].cuotaV>0||reg[t].baseG>0||reg[t].cuotaG>0)) tiposUsados.add(t); });
+  });
+  const tiposActivos = tipos.filter(t => tiposUsados.has(t));
+  if (actsOrdenadas.length===0 || tiposActivos.length===0) {
+    return `<div class="aviso">Sin operaciones en régimen general en este período.</div>`;
+  }
+  // --- Ventas (IVA repercutido) ---
+  const filasVentas = actsOrdenadas.map(a => {
+    const reg = libroIVA[a.actividad] || {};
+    const cells = tiposActivos.map(t => {
+      const r = reg[t] || { baseV:0, cuotaV:0 };
+      if (r.baseV===0 && r.cuotaV===0) return `<td class="num" style="color:#cbd5e1">—</td><td class="num" style="color:#cbd5e1">—</td>`;
+      return `<td class="num" style="color:#15803d">${fmtN(r.baseV)}</td><td class="num" style="color:#15803d;font-weight:700">+${fmtN(r.cuotaV)}</td>`;
+    }).join("");
+    const subBase = tiposActivos.reduce((s,t)=>s+((reg[t]?.baseV)||0),0);
+    const subCuota = tiposActivos.reduce((s,t)=>s+((reg[t]?.cuotaV)||0),0);
+    return `<tr><td style="font-weight:700;background:#f8fafc">${a.actividad}</td>${cells}<td class="num" style="font-weight:800;background:#f0fdf4">${fmtN(subBase)}</td><td class="num" style="font-weight:900;background:#f0fdf4;color:#15803d">+${fmtN(subCuota)}</td></tr>`;
+  }).join("");
+  // Totales ventas
+  const totVentBase = tiposActivos.map(t => actsOrdenadas.reduce((s,a)=>s+((libroIVA[a.actividad]?.[t]?.baseV)||0),0));
+  const totVentCuota = tiposActivos.map(t => actsOrdenadas.reduce((s,a)=>s+((libroIVA[a.actividad]?.[t]?.cuotaV)||0),0));
+  const totVentBaseT = totVentBase.reduce((s,v)=>s+v,0);
+  const totVentCuotaT = totVentCuota.reduce((s,v)=>s+v,0);
+  const filaTotVent = `<tr class="total-row"><td>TOTAL VENTAS</td>${tiposActivos.map((_,i)=>`<td class="num">${fmtN(totVentBase[i])}</td><td class="num">+${fmtN(totVentCuota[i])}</td>`).join("")}<td class="num" style="font-size:11px">${fmtN(totVentBaseT)}</td><td class="num" style="font-size:11px">+${fmtN(totVentCuotaT)}</td></tr>`;
+  // --- Gastos (IVA soportado) ---
+  const filasGastos = actsOrdenadas.map(a => {
+    const reg = libroIVA[a.actividad] || {};
+    const cells = tiposActivos.map(t => {
+      const r = reg[t] || { baseG:0, cuotaG:0 };
+      if (r.baseG===0 && r.cuotaG===0) return `<td class="num" style="color:#cbd5e1">—</td><td class="num" style="color:#cbd5e1">—</td>`;
+      return `<td class="num" style="color:#dc2626">${fmtN(r.baseG)}</td><td class="num" style="color:#dc2626;font-weight:700">-${fmtN(r.cuotaG)}</td>`;
+    }).join("");
+    const subBase = tiposActivos.reduce((s,t)=>s+((reg[t]?.baseG)||0),0);
+    const subCuota = tiposActivos.reduce((s,t)=>s+((reg[t]?.cuotaG)||0),0);
+    if (subBase===0 && subCuota===0) return "";
+    return `<tr><td style="font-weight:700;background:#f8fafc">${a.actividad}</td>${cells}<td class="num" style="font-weight:800;background:#fef2f2">${fmtN(subBase)}</td><td class="num" style="font-weight:900;background:#fef2f2;color:#dc2626">-${fmtN(subCuota)}</td></tr>`;
+  }).filter(Boolean).join("");
+  const totGasBase = tiposActivos.map(t => actsOrdenadas.reduce((s,a)=>s+((libroIVA[a.actividad]?.[t]?.baseG)||0),0));
+  const totGasCuota = tiposActivos.map(t => actsOrdenadas.reduce((s,a)=>s+((libroIVA[a.actividad]?.[t]?.cuotaG)||0),0));
+  const totGasBaseT = totGasBase.reduce((s,v)=>s+v,0);
+  const totGasCuotaT = totGasCuota.reduce((s,v)=>s+v,0);
+  const filaTotGas = `<tr class="total-row"><td>TOTAL GASTOS</td>${tiposActivos.map((_,i)=>`<td class="num">${fmtN(totGasBase[i])}</td><td class="num">-${fmtN(totGasCuota[i])}</td>`).join("")}<td class="num" style="font-size:11px">${fmtN(totGasBaseT)}</td><td class="num" style="font-size:11px">-${fmtN(totGasCuotaT)}</td></tr>`;
+  const cabTipos = tiposActivos.map(t => `<th colspan="2" style="text-align:center;background:#1e40af">${tiposLabel[t]}</th>`).join("");
+  const subCabBase = tiposActivos.map(() => `<th style="text-align:right;font-size:8px">Base</th><th style="text-align:right;font-size:8px">Cuota</th>`).join("");
+  return `
+<table style="font-size:9px">
+<thead>
+  <tr><th rowspan="2" style="width:14%;vertical-align:middle">Actividad</th>${cabTipos}<th colspan="2" style="text-align:center;background:#0f172a">SUBTOTAL</th></tr>
+  <tr>${subCabBase}<th style="text-align:right;font-size:8px">Base total</th><th style="text-align:right;font-size:8px">Cuota total</th></tr>
+</thead>
+<tbody>
+<tr><td colspan="${tiposActivos.length*2+3}" style="background:#059669;color:#fff;font-weight:900;padding:5px 10px;text-transform:uppercase;letter-spacing:.05em;font-size:8.5px">IVA repercutido · Ventas</td></tr>
+${filasVentas}
+${filaTotVent}
+<tr><td colspan="${tiposActivos.length*2+3}" style="background:#dc2626;color:#fff;font-weight:900;padding:5px 10px;text-transform:uppercase;letter-spacing:.05em;font-size:8.5px">IVA soportado · Gastos (solo deducible)</td></tr>
+${filasGastos || `<tr><td colspan="${tiposActivos.length*2+3}" style="text-align:center;color:#94a3b8;padding:8px;font-style:italic">Sin gastos con IVA deducible en régimen general</td></tr>`}
+${filasGastos?filaTotGas:""}
+${(totales.cuotaReta?.importeTotal||0)>0?`
+<tr><td colspan="${tiposActivos.length*2+3}" style="background:#9333ea;color:#fff;font-weight:900;padding:5px 10px;text-transform:uppercase;letter-spacing:.05em;font-size:8.5px">Cuota RETA autónomo · Exento IVA (art.20.Uno.12 LIVA) · Deducible IRPF</td></tr>
+<tr style="background:#faf5ff">
+  <td style="font-weight:700">Seguridad Social · ${totales.cuotaReta.meses} mes${totales.cuotaReta.meses!==1?"es":""} × ${fmtN(totales.cuotaReta.importeMensual)} €</td>
+  ${tiposActivos.map(()=>`<td class="num" style="color:#cbd5e1">—</td><td class="num" style="color:#cbd5e1">—</td>`).join("")}
+  <td class="num" style="font-weight:800;color:#dc2626;background:#fef2f2">${fmtN(totales.cuotaReta.importeTotal)}</td>
+  <td class="num" style="font-weight:900;color:#9333ea;background:#faf5ff">Sin IVA</td>
+</tr>`:""}
+</tbody>
+</table>
+<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:9px 12px;margin-bottom:14px;font-size:10px">
+  <div style="font-weight:900;color:#0f172a;margin-bottom:4px;text-transform:uppercase;letter-spacing:.05em;font-size:9px">Liquidación Modelo 303 — ${pLabel}</div>
+  <div style="font-family:monospace;color:#475569;line-height:1.7">
+    IVA devengado (repercutido en ventas): <b style="color:#15803d">+${fmtN(totVentCuotaT)} €</b>${(totales.fiscal303?.ventasRecargo||0)>0?` + recargo eq. ventas <b>+${fmtN(totales.fiscal303.ventasRecargo)} €</b>`:""}<br>
+    (-) IVA deducible (soportado en gastos): <b style="color:#dc2626">-${fmtN(totGasCuotaT)} €</b>${(totales.fiscal303?.gastosRecargo||0)>0?` - recargo eq. gastos <b>-${fmtN(totales.fiscal303.gastosRecargo)} €</b>`:""}<br>
+    <span style="border-top:1px solid #cbd5e1;display:inline-block;min-width:100%;padding-top:3px;margin-top:3px">= Cuota a ingresar Mod.303: <b style="color:${(totales.fiscal303?.ivaLiquidar ?? totales.ivaLiquidar)>=0?"#dc2626":"#15803d"};font-size:11px">${fmtN(totales.fiscal303?.ivaLiquidar ?? totales.ivaLiquidar)} €</b></span>
+  </div>
+</div>`;
+})()}
 <div class="st">Libro de IVA — Resumen (solo régimen general, Mod.303)</div>
 ${(totales.recargoEq?.nVentas||0)>0?`<div class="aviso" style="background:#faf5ff;border-color:#e9d5ff;color:#7e22ce">
 La actividad de <b>Tienda</b> (recargo de equivalencia, art.148-163 LIVA) queda excluida de este resumen de IVA. Se detalla en el apéndice al final del documento.
@@ -4628,6 +4803,7 @@ ${boxMod("MOD. 130","IRPF — Pago fraccionado (art. 110.3 RIRPF)","#4338ca","#3
   ["Ingresos acumulados (base imponible)","+"+fmtN(totales.ventasBase)+" €",""],
   ["Gastos deducibles acumulados","-"+fmtN(totales.gastosFiscales ?? (totales.gastosBase+totales.nominasCoste))+" €","color:#dc2626"],
   ...(hayTienda ? [["  (incluye coste mercancía tienda "+fmtN(totales.recargoEq.costeMercancia)+" €)","","font-size:8px;color:#7e22ce"]] : []),
+  ...((totales.cuotaReta?.importeTotal||0)>0 ? [["  (incluye cuota RETA "+totales.cuotaReta.meses+"×"+fmtN(totales.cuotaReta.importeMensual)+" = "+fmtN(totales.cuotaReta.importeTotal)+" €)","","font-size:8px;color:#9333ea"]] : []),
   ["Rendimiento neto estimado",fmtN(rndNeto)+" €","font-weight:900"],
   ["Tipo de pago fraccionado","20%",""],
   ["Cuota íntegra (20% × rendimiento)",fmtN(Math.max(0,rndNeto)*0.20)+" €",""],
@@ -4891,16 +5067,16 @@ function VistaInformeGestoria({ facturas, nominas, actividades }) {
 
   // Gestoría: siempre SIN estimaciones AEAT (sinFiscal=true)
   const handlePrint = () => {
-    const html = buildInformeGestoriaHTML(data, pLabel, empDef.nombre, empDef.nif, irpf111Nom, true);
+    const html = buildInformeGestoriaHTML(data, pLabel, empDef.nombre, empDef.nif, irpf111Nom, true, irpf115Gest);
     openPrint(html);
   };
   const handlePDF = () => {
-    const html = buildInformeGestoriaHTML(data, pLabel, empDef.nombre, empDef.nif, irpf111Nom, true);
+    const html = buildInformeGestoriaHTML(data, pLabel, empDef.nombre, empDef.nif, irpf111Nom, true, irpf115Gest);
     downloadPDF(html, "informe-gestoria-" + pLabel.replace(/ /g,"-").toLowerCase() + ".pdf");
   };
   // Uso interno: CON estimaciones AEAT
   const handlePDFInterno = () => {
-    const html = buildInformeGestoriaHTML(data, pLabel, empDef.nombre, empDef.nif, irpf111Nom, false);
+    const html = buildInformeGestoriaHTML(data, pLabel, empDef.nombre, empDef.nif, irpf111Nom, false, irpf115Gest);
     downloadPDF(html, "informe-interno-" + pLabel.replace(/ /g,"-").toLowerCase() + ".pdf");
   };
 
@@ -4913,13 +5089,34 @@ function VistaInformeGestoria({ facturas, nominas, actividades }) {
   const handleSoloActV     = () => downloadPDF(buildResumenActividadesSinFiscalHTML(data, factsFil, pLabel, empDef.nombre, empDef.nif, false), `actividades-gestoria-vertical-${pLabel.replace(/ /g,"-")}.pdf`);
   const handleSoloActH     = () => downloadPDF(buildResumenActividadesSinFiscalHTML(data, factsFil, pLabel, empDef.nombre, empDef.nif, true),  `actividades-gestoria-horizontal-${pLabel.replace(/ /g,"-")}.pdf`);
   // Resumen completo SIN estimaciones AEAT (vertical + horizontal)
-  const handleResumenSinFiscalV = () => downloadPDF(buildInformeGestoriaHTML(data, pLabel, empDef.nombre, empDef.nif, irpf111Nom, true),  `resumen-gestoria-vertical-${pLabel.replace(/ /g,"-")}.pdf`);
-  const handleResumenSinFiscalH = () => downloadPDF(toGestoriaLandscape(buildInformeGestoriaHTML(data, pLabel, empDef.nombre, empDef.nif, irpf111Nom, true)),  `resumen-gestoria-horizontal-${pLabel.replace(/ /g,"-")}.pdf`);
+  const handleResumenSinFiscalV = () => downloadPDF(buildInformeGestoriaHTML(data, pLabel, empDef.nombre, empDef.nif, irpf111Nom, true, irpf115Gest),  `resumen-gestoria-vertical-${pLabel.replace(/ /g,"-")}.pdf`);
+  const handleResumenSinFiscalH = () => downloadPDF(toGestoriaLandscape(buildInformeGestoriaHTML(data, pLabel, empDef.nombre, empDef.nif, irpf111Nom, true, irpf115Gest)),  `resumen-gestoria-horizontal-${pLabel.replace(/ /g,"-")}.pdf`);
   // Uso interno CON estimaciones AEAT (horizontal)
-  const handleResumenComplH = () => downloadPDF(toGestoriaLandscape(buildInformeGestoriaHTML(data, pLabel, empDef.nombre, empDef.nif, irpf111Nom, false)), `resumen-interno-horizontal-${pLabel.replace(/ /g,"-")}.pdf`);
+  const handleResumenComplH = () => downloadPDF(toGestoriaLandscape(buildInformeGestoriaHTML(data, pLabel, empDef.nombre, empDef.nif, irpf111Nom, false, irpf115Gest)), `resumen-interno-horizontal-${pLabel.replace(/ /g,"-")}.pdf`);
 
   const toggle = (act) => setExpandidas(p => ({...p, [act]: !p[act]}));
   const colorB = (v) => v >= 0 ? "text-emerald-700" : "text-rose-600";
+
+  // Configuración cuota RETA (Seguridad Social autónomo)
+  const [retaMensual, setRetaMensual] = React.useState(() => parseFloat(empDef.cuotaReta || 0) || 0);
+  const [retaModo, setRetaModo] = React.useState("mensual"); // "mensual" o "trimestral"
+  const [retaDraft, setRetaDraft] = React.useState(retaMensual.toString());
+  const [retaEditing, setRetaEditing] = React.useState(false);
+  const guardarReta = () => {
+    const valor = parseFloat(retaDraft.replace(",", ".")) || 0;
+    // Si el usuario introduce importe trimestral, lo convertimos a mensual para almacenar
+    const mensual = retaModo === "trimestral" ? valor / 3 : valor;
+    const cfg = getEmpresaDefaults();
+    setEmpresaDefaults({ ...cfg, cuotaReta: mensual });
+    setRetaMensual(mensual);
+    setRetaEditing(false);
+    window.location.reload();
+  };
+  const abrirEdicion = () => {
+    setRetaDraft(retaMensual.toString());
+    setRetaModo("mensual");
+    setRetaEditing(true);
+  };
 
   return (
     <div className="space-y-6 max-w-6xl mx-auto">
@@ -4985,12 +5182,14 @@ function VistaInformeGestoria({ facturas, nominas, actividades }) {
             </div>
           </div>
         </div>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
           {[
             { l:"Ingresos (base)", v:fmt(totales.ventasBase), c:"text-emerald-300" },
-            { l:"Gastos deducibles", v:"-"+fmt(totales.gastosBase+totales.nominasCoste), c:"text-rose-300" },
-            { l:"Resultado neto", v:(totales.beneficioBruto>=0?"+":"")+fmt(totales.beneficioBruto), c:totales.beneficioBruto>=0?"text-emerald-300":"text-rose-300" },
-            { l:"IVA a liquidar (303)", v:fmt(totales.ivaLiquidar), c:"text-sky-300" },
+            { l:"Gastos rég.general", v:"-"+fmt(totales.fiscal303?.gastosBase ?? totales.gastosBase), c:"text-rose-300" },
+            ...((totales.recargoEq?.nVentas||0)>0 ? [{ l:"Coste merc. tienda", v:"-"+fmt(totales.recargoEq.costeMercancia), c:"text-violet-300" }] : []),
+            ...((totales.cuotaReta?.importeTotal||0)>0 ? [{ l:`Cuota RETA (${totales.cuotaReta.meses}m)`, v:"-"+fmt(totales.cuotaReta.importeTotal), c:"text-purple-300" }] : []),
+            { l:"Resultado fiscal", v:(totales.beneficioBruto>=0?"+":"")+fmt(totales.beneficioBruto), c:totales.beneficioBruto>=0?"text-emerald-300":"text-rose-300" },
+            { l:"IVA a liquidar (303)", v:fmt(totales.fiscal303?.ivaLiquidar ?? totales.ivaLiquidar), c:"text-sky-300" },
           ].map(({l,v,c}) => (
             <div key={l} className="bg-white/5 border border-white/10 rounded-xl px-4 py-3">
               <div className="text-xs text-white/40 mb-0.5">{l}</div>
@@ -4998,6 +5197,44 @@ function VistaInformeGestoria({ facturas, nominas, actividades }) {
             </div>
           ))}
         </div>
+      </div>
+
+      {/* Configuración Cuota RETA (Seguridad Social autónomo) */}
+      <div className="bg-purple-50 border border-purple-200 rounded-xl px-5 py-3 shadow-sm">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2">
+            <span className="bg-purple-600 text-white text-xs font-black px-2 py-0.5 rounded">RETA</span>
+            <span className="text-sm font-bold text-purple-900">Cuota Seguridad Social autónomo</span>
+            <span className="text-xs text-purple-600">(art.30.2 LIRPF · deducible · exento IVA)</span>
+          </div>
+          {retaEditing ? (
+            <>
+              <div className="flex bg-white border border-purple-300 rounded-lg p-0.5 gap-0.5">
+                <button onClick={()=>setRetaModo("mensual")} className={`px-2.5 py-1 rounded text-xs font-bold transition-all ${retaModo==="mensual"?"bg-purple-600 text-white":"text-purple-700 hover:bg-purple-100"}`}>Mensual</button>
+                <button onClick={()=>setRetaModo("trimestral")} className={`px-2.5 py-1 rounded text-xs font-bold transition-all ${retaModo==="trimestral"?"bg-purple-600 text-white":"text-purple-700 hover:bg-purple-100"}`}>Trimestral</button>
+              </div>
+              <input type="number" step="0.01" className="border border-purple-300 rounded-lg px-3 py-1.5 text-sm w-32 font-mono" value={retaDraft} onChange={e=>setRetaDraft(e.target.value)} placeholder="0.00" autoFocus/>
+              <span className="text-xs text-purple-700">€ {retaModo==="mensual"?"al mes":"al trimestre (÷3 para mensual)"}</span>
+              <button onClick={guardarReta} className="bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold px-3 py-1.5 rounded-lg">Guardar</button>
+              <button onClick={()=>{setRetaEditing(false);setRetaDraft(retaMensual.toString());}} className="text-xs text-purple-600 hover:text-purple-800">Cancelar</button>
+            </>
+          ) : (
+            <>
+              <span className="text-sm font-mono font-bold text-purple-900">{fmt(retaMensual)} €/mes</span>
+              {retaMensual > 0 && (
+                <span className="text-xs text-purple-700">× {totales.cuotaReta?.meses || 1} mes{(totales.cuotaReta?.meses||1)>1?"es":""} = <span className="font-bold font-mono">{fmt(totales.cuotaReta?.importeTotal || 0)} €</span> en {pLabel}</span>
+              )}
+              <button onClick={abrirEdicion} className="ml-auto text-xs bg-white border border-purple-300 hover:bg-purple-100 text-purple-800 font-bold px-3 py-1.5 rounded-lg">
+                {retaMensual > 0 ? "Editar" : "Configurar cuota"}
+              </button>
+            </>
+          )}
+        </div>
+        {retaEditing && retaModo==="trimestral" && parseFloat(retaDraft) > 0 && (
+          <div className="mt-2 text-xs text-purple-700 font-mono">
+            Equivale a {fmt(parseFloat(retaDraft.replace(",","."))/3)} €/mes · Se guarda como cuota mensual para calcular cualquier período (mes, trimestre o año).
+          </div>
+        )}
       </div>
 
       {/* Selector período */}
