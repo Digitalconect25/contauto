@@ -106,6 +106,22 @@ function calcFacturaReal(f) {
   return t;
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+// RECARGO DE EQUIVALENCIA — art. 148-163 LIVA
+// La tienda minorista de Servicios Digital Conect opera en este régimen.
+// Los proveedores aplican recargo adicional (5,2% / 1,4% / 0,5% / 1,75%)
+// y Hacienda NO exige declarar IVA en Mod.303 por esta actividad:
+//   - Las VENTAS de tienda no se incluyen en el IVA repercutido del 303
+//   - Las COMPRAS de mercancía con recargo NO son deducibles (son gasto)
+//   - El IVA + recargo pagado al proveedor se contabiliza como GASTO
+// En Mod.130 (IRPF) SÍ se suman ingresos y gastos de tienda, porque el
+// pago fraccionado de renta afecta a todas las actividades del autónomo.
+function esActividadRecargo(f) {
+  const tipoDoc = (f.tipoDoc || f.tipo_doc || "").toLowerCase();
+  const actividad = (f.actividad || "").trim().toLowerCase();
+  return tipoDoc === "venta_tienda" || actividad === "tienda";
+}
+
 // Agrupa líneas por tipo de IVA para el resumen fiscal.
 // Distingue mismo porcentaje con y sin recargo de equivalencia,
 // ya que producen bases fiscales distintas en el libro de IVA.
@@ -3471,13 +3487,10 @@ function Dashboard({ facturas, nominas, trabajadores, periodMode, periodValue, p
             <div className="space-y-1.5 text-sm">
               {(() => {
                 const repG = {}; const sopG = {};
-                factsQ.forEach(f => {
-                  const esTienda = (f.tipoDoc||f.tipo_doc)==="venta_tienda";
-                  if (esTienda) {
-                    const t=calcFacturaReal(f);
-                    if(!repG["T"])repG["T"]={c:0,b:0,lbl:"Tienda"};
-                    repG["T"].b+=t.totalBase; repG["T"].c+=t.totalIVA; return;
-                  }
+                // Mod.303: EXCLUIR actividad de tienda (recargo de equivalencia, art.148-163 LIVA)
+                const factsQSinTienda = factsQ.filter(f => !esActividadRecargo(f));
+                const tiendaExcluida = factsQSinTienda.length !== factsQ.length;
+                factsQSinTienda.forEach(f => {
                   (f.lineas||[]).forEach(l => {
                     const pct=parseInt(l.tipoIVA||l.iva||0);
                     const cv=calcLinea(l, f.aplicarRecargo||f.aplicar_recargo||false);
@@ -3495,7 +3508,16 @@ function Dashboard({ facturas, nominas, trabajadores, periodMode, periodValue, p
                 const repArr=srt(repG); const sopArr=srt(sopG);
                 const tRepRec=repArr.reduce((s,[,v])=>s+(v.r||0),0);
                 const tSopRec=sopArr.reduce((s,[,v])=>s+(v.r||0),0);
+                // IVA repercutido/soportado del 303 SIN tienda
+                const ivaRep303 = repArr.reduce((s,[,v])=>s+v.c,0);
+                const ivaSop303 = sopArr.reduce((s,[,v])=>s+v.c,0);
+                const ivaAPagar303 = ivaRep303 + tRepRec - ivaSop303 - tSopRec;
                 return (<>
+                  {tiendaExcluida && (
+                    <div className="bg-violet-50 border border-violet-200 rounded-lg px-2.5 py-1.5 mb-2 text-xs text-violet-800">
+                      <span className="font-bold">Tienda excluida del Mod.303.</span> Régimen de recargo de equivalencia (art.148-163 LIVA): las ventas minoristas no se declaran en el 303.
+                    </div>
+                  )}
                   <div className="rounded-lg overflow-hidden border border-emerald-700 mb-1">
                     <div className="grid grid-cols-3 px-2.5 py-1 bg-emerald-700 text-xs font-bold text-white">
                       <span>Repercutido (ventas)</span><span className="text-right">Base</span><span className="text-right">Cuota+R.eq.</span>
@@ -3504,7 +3526,7 @@ function Dashboard({ facturas, nominas, trabajadores, periodMode, periodValue, p
                       ? <div className="px-2.5 py-1 text-xs text-slate-500 italic">Sin ventas</div>
                       : repArr.map(([k,v])=>(
                         <div key={k} className="grid grid-cols-3 px-2.5 py-0.5 text-xs text-slate-800 border-t border-emerald-200 bg-white/60">
-                          <span className="font-semibold">{v.lbl?v.lbl:k==="E"?"Exento":`${k}%`}{(v.r||0)>0?" +RE":""}</span>
+                          <span className="font-semibold">{k==="E"?"Exento":`${k}%`}{(v.r||0)>0?" +RE":""}</span>
                           <span className="text-right font-mono">{fmt(v.b)}</span>
                           <span className="text-right font-mono text-emerald-800 font-bold">+{fmt(v.c+(v.r||0))}</span>
                         </div>
@@ -3513,7 +3535,7 @@ function Dashboard({ facturas, nominas, trabajadores, periodMode, periodValue, p
                     <div className="grid grid-cols-3 px-2.5 py-1 border-t border-emerald-700 text-xs font-black text-white bg-emerald-700">
                       <span>Total rep.{tRepRec>0?` (R.eq.${fmt(tRepRec)})`:""}</span>
                       <span className="text-right font-mono">{fmt(repArr.reduce((s,[,v])=>s+v.b,0))}</span>
-                      <span className="text-right font-mono">+{fmt(qF.ivaRep+tRepRec)}</span>
+                      <span className="text-right font-mono">+{fmt(ivaRep303+tRepRec)}</span>
                     </div>
                   </div>
                   <div className="rounded-lg overflow-hidden border border-rose-700 mb-1">
@@ -3533,13 +3555,13 @@ function Dashboard({ facturas, nominas, trabajadores, periodMode, periodValue, p
                     <div className="grid grid-cols-3 px-2.5 py-1 border-t border-rose-700 text-xs font-black text-white bg-rose-700">
                       <span>Total soportado</span>
                       <span className="text-right font-mono">{fmt(sopArr.reduce((s,[,v])=>s+v.b,0))}</span>
-                      <span className="text-right font-mono">-{fmt(qF.ivaSop+tSopRec)}</span>
+                      <span className="text-right font-mono">-{fmt(ivaSop303+tSopRec)}</span>
                     </div>
                   </div>
-                  {ivaAPagar < 0 && <div className="text-xs text-slate-700 font-semibold mt-1">Crédito a compensar o solicitar devolución en 4T</div>}
+                  {ivaAPagar303 < 0 && <div className="text-xs text-slate-700 font-semibold mt-1">Crédito a compensar o solicitar devolución en 4T</div>}
                   <div className="flex justify-between font-black border-t border-amber-300 pt-2 text-base">
-                    <span className="text-amber-900">{ivaAPagar >= 0 ? "Cuota a ingresar" : "A compensar"}</span>
-                    <span className="text-amber-900 font-mono">{fmt(Math.abs(ivaAPagar))}</span>
+                    <span className="text-amber-900">{ivaAPagar303 >= 0 ? "Cuota a ingresar" : "A compensar"}</span>
+                    <span className="text-amber-900 font-mono">{fmt(Math.abs(ivaAPagar303))}</span>
                   </div>
                 </>);
               })()}
@@ -3952,10 +3974,18 @@ function calcInformeActividades(facturas, nominas, mode, value, year) {
     };
     return mapa[act];
   };
+  // Totales específicos del régimen de recargo de equivalencia (tienda).
+  // No se declaran en Mod.303, pero sí cuentan para Mod.130 (IRPF).
+  const recargoEq = {
+    ventasBase:0, ivaInformativo:0, costeMercancia:0, beneficioTienda:0,
+    gastosBase:0, gastosIVA:0, gastosRecargo:0, gastosTotal:0,
+    nVentas:0, nGastos:0,
+  };
   factsFil.forEach(f => {
     const act = f.actividad || "Sin actividad";
     const d = getAct(act);
     const t = calcFacturaReal(f);
+    const enRecargo = esActividadRecargo(f);
     const esTienda = (f.tipoDoc || f.tipo_doc) === "venta_tienda";
     if (f.tipo === "venta") {
       if (esTienda) {
@@ -3965,6 +3995,11 @@ function calcInformeActividades(facturas, nominas, mode, value, year) {
         d.tiendaBeneficio += (t.beneficioTienda || t.totalBase - (t.costeMercancia||0));
         d.nTienda++;
         d.ventasBase += t.totalBase; d.ventasIVA += t.totalIVA; d.ventasTotal += t.total; d.nVentas++;
+        recargoEq.ventasBase      += t.totalBase;
+        recargoEq.ivaInformativo  += t.totalIVA;
+        recargoEq.costeMercancia  += (t.costeMercancia || 0);
+        recargoEq.beneficioTienda += (t.beneficioTienda || t.totalBase - (t.costeMercancia||0));
+        recargoEq.nVentas++;
       } else {
         d.ventasBase += t.totalBase; d.ventasIVA += t.totalIVA;
         d.ventasRecargo += t.totalRecargo || 0;
@@ -3976,6 +4011,14 @@ function calcInformeActividades(facturas, nominas, mode, value, year) {
       d.gastosRecargo += t.totalRecargo || 0;
       d.gastosRetencion += t.totalRetencion || 0;
       d.gastosTotal += t.total; d.nGastos++;
+      if (enRecargo) {
+        // Compras para la tienda: IVA+recargo pagado a proveedores = gasto no deducible en 303
+        recargoEq.gastosBase    += t.totalBase;
+        recargoEq.gastosIVA     += t.totalIVA;
+        recargoEq.gastosRecargo += t.totalRecargo || 0;
+        recargoEq.gastosTotal   += t.total;
+        recargoEq.nGastos++;
+      }
     }
   });
   if (nomisFil.length > 0) {
@@ -4022,10 +4065,23 @@ function calcInformeActividades(facturas, nominas, mode, value, year) {
     nGastos:         acc.nGastos         + d.nGastos,
     nNominas:        acc.nNominas        + d.nNominas,
   }), zero);
+  // Totales fiscales para Mod.303 — EXCLUYEN la actividad de tienda (recargo equivalencia)
+  const fiscal303 = {
+    ventasBase:      tot.ventasBase      - recargoEq.ventasBase,
+    ventasIVA:       tot.ventasIVA       - recargoEq.ivaInformativo,
+    ventasRecargo:   tot.ventasRecargo,
+    ventasRetencion: tot.ventasRetencion,
+    gastosBase:      tot.gastosBase      - recargoEq.gastosBase,
+    gastosIVA:       tot.gastosIVA       - recargoEq.gastosIVA,
+    gastosRecargo:   tot.gastosRecargo   - recargoEq.gastosRecargo,
+  };
+  fiscal303.ivaLiquidar = fiscal303.ventasIVA + fiscal303.ventasRecargo - fiscal303.gastosIVA - fiscal303.gastosRecargo;
+  tot.fiscal303 = fiscal303;
+  tot.recargoEq = recargoEq;
   return { actividades: actividades.sort((a,b) => b.ventasBase - a.ventasBase), totales: tot };
 }
 
-function buildInformeGestoriaHTML(data, pLabel, empresaNombre, empresaNif, irpf111Nom) {
+function buildInformeGestoriaHTML(data, pLabel, empresaNombre, empresaNif, irpf111Nom, sinFiscal = false) {
   const now = new Date().toLocaleDateString("es-ES", { day:"2-digit", month:"long", year:"numeric" });
   const { actividades, totales } = data;
   const fmtN = v => (v||0).toLocaleString("es-ES", { minimumFractionDigits:2, maximumFractionDigits:2 });
@@ -4054,8 +4110,8 @@ function buildInformeGestoriaHTML(data, pLabel, empresaNombre, empresaNif, irpf1
   ${d.nTienda>0?`<tr style="background:#faf5ff"><td class="lbl" colspan="2" style="color:#7e22ce;font-size:10px">
     Tienda — Subtotal: ${fmtN(d.tiendaSubtotal)} € · IVA: ${fmtN(d.tiendaImpuesto)} € · Coste mercancía: ${fmtN(d.tiendaCoste)} € · Beneficio: ${fmtN(d.tiendaBeneficio)} €</td><td></td></tr>`:""}
   <tr><td colspan="3" style="height:6px;background:transparent;border:none"></td></tr>`;
-  const css = `@page{margin:14mm 16mm;size:A4}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
-body{font-family:'Helvetica Neue',Arial,sans-serif;font-size:11px;color:#0f172a;margin:0;line-height:1.5}
+  const css = `@page{size:A4;margin:0}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}html{-webkit-print-color-adjust:exact}}
+body{font-family:'Helvetica Neue',Arial,sans-serif;font-size:11px;color:#0f172a;margin:14mm 16mm;line-height:1.5;-webkit-print-color-adjust:exact;print-color-adjust:exact}
 .hdr{background:#0f172a;color:#fff;padding:16px 20px;border-radius:8px;margin-bottom:18px;display:flex;justify-content:space-between;align-items:center}
 .hdr h1{font-size:17px;font-weight:900;margin:0}.hdr p{font-size:9px;color:rgba(255,255,255,.55);margin:2px 0 0}
 .badge{background:#2563eb;color:#fff;padding:3px 10px;border-radius:20px;font-size:9px;font-weight:800;text-transform:uppercase}
@@ -4089,11 +4145,11 @@ thead th:not(:first-child){text-align:right}tbody td{padding:5px 9px;border-bott
   <div class="kpi"><div class="kpi-lbl">Resultado neto</div><div class="kpi-val ${totales.beneficioBruto>=0?"g":"r"}">${totales.beneficioBruto>=0?"+":""}${fmtN(totales.beneficioBruto)} €</div></div>
   <div class="kpi"><div class="kpi-lbl">IVA neto (Mod.303)</div><div class="kpi-val b">${fmtN(totales.ivaLiquidar)} €</div></div>
 </div>
-<div class="st">Estimación modelos AEAT — ${pLabel}</div>
+${sinFiscal ? "" : `<div class="st">Estimación modelos AEAT — ${pLabel}</div>
 <div class="fiscal">
   <div class="fbox"><div class="fmod">Mod. 303 — IVA trimestral</div>
-    <div class="fval" style="color:${totales.ivaLiquidar>=0?"#dc2626":"#15803d"}">${fmtN(Math.abs(totales.ivaLiquidar))} €</div>
-    <div class="fdet">Rep. ${fmtN(totales.ventasIVA+(totales.ventasRecargo||0))} € - Sop. ${fmtN(totales.gastosIVA+(totales.gastosRecargo||0))} €${totales.ivaLiquidar<0?" → A devolver":""}</div>
+    <div class="fval" style="color:${(totales.fiscal303?.ivaLiquidar ?? totales.ivaLiquidar)>=0?"#dc2626":"#15803d"}">${fmtN(Math.abs(totales.fiscal303?.ivaLiquidar ?? totales.ivaLiquidar))} €</div>
+    <div class="fdet">Rep. ${fmtN((totales.fiscal303?.ventasIVA ?? totales.ventasIVA)+((totales.fiscal303?.ventasRecargo ?? totales.ventasRecargo)||0))} € - Sop. ${fmtN((totales.fiscal303?.gastosIVA ?? totales.gastosIVA)+((totales.fiscal303?.gastosRecargo ?? totales.gastosRecargo)||0))} €${(totales.fiscal303?.ivaLiquidar ?? totales.ivaLiquidar)<0?" → A devolver":""}${(totales.recargoEq?.nVentas||0)>0?"<br><span style=\"color:#7e22ce;font-weight:700\">Excluida tienda (recargo eq.)</span>":""}</div>
   </div>
   <div class="fbox"><div class="fmod">Mod. 130 — IRPF fraccionado</div>
     <div class="fval" style="color:#b45309">${fmtN(totales.irpfFraccionado)} €</div>
@@ -4103,7 +4159,7 @@ thead th:not(:first-child){text-align:right}tbody td{padding:5px 9px;border-bott
     <div class="fval" style="color:#7e22ce">${fmtN(irpf111Nom)} €</div>
     <div class="fdet">IRPF nóminas + profesionales externos<br>SS total TGSS: ${fmtN((totales.nominasSSTrab||0)+(totales.nominasSSEmp||0))} €</div>
   </div>
-</div>
+</div>`}
 <div class="st">Desglose por actividad económica</div>
 <table><thead><tr><th style="width:21%">Actividad</th><th style="width:31%">Concepto</th><th style="width:30%;text-align:right">Importe</th><th style="width:18%;text-align:right">Detalle</th></tr></thead>
 <tbody>${actividades.map(d=>filaAct(d)).join("")}
@@ -4111,31 +4167,66 @@ thead th:not(:first-child){text-align:right}tbody td{padding:5px 9px;border-bott
   <td class="num">${totales.beneficioBruto>=0?"+":""}${fmtN(totales.beneficioBruto)} €</td>
   <td class="num" style="font-size:9.5px">${totales.nVentas} vtas / ${totales.nGastos} gtos</td></tr>
 </tbody></table>
-<div class="st">Libro de IVA — Resumen</div>
+<div class="st">Libro de IVA — Resumen (solo régimen general, Mod.303)</div>
+${(totales.recargoEq?.nVentas||0)>0?`<div class="aviso" style="background:#faf5ff;border-color:#e9d5ff;color:#7e22ce">
+La actividad de <b>Tienda</b> (recargo de equivalencia, art.148-163 LIVA) queda excluida de este resumen de IVA. Se detalla en el apéndice al final del documento.
+</div>`:""}
 <table><thead><tr><th>Concepto</th><th>Base imponible</th><th>Cuota IVA</th><th>Rec. equiv.</th><th>Retención IRPF</th><th>Total</th></tr></thead>
 <tbody>
 <tr><td>IVA Repercutido (Ventas)</td>
-  <td class="num green">${fmtN(totales.ventasBase)} €</td>
-  <td class="num green">+${fmtN(totales.ventasIVA)} €</td>
-  <td class="num">${(totales.ventasRecargo||0)>0?"+"+fmtN(totales.ventasRecargo)+" €":"—"}</td>
-  <td class="num red">${totales.ventasRetencion>0?"-"+fmtN(totales.ventasRetencion)+" €":"—"}</td>
-  <td class="num green">${fmtN(totales.ventasBase+totales.ventasIVA+(totales.ventasRecargo||0)-totales.ventasRetencion)} €</td>
+  <td class="num green">${fmtN(totales.fiscal303?.ventasBase ?? totales.ventasBase)} €</td>
+  <td class="num green">+${fmtN(totales.fiscal303?.ventasIVA ?? totales.ventasIVA)} €</td>
+  <td class="num">${((totales.fiscal303?.ventasRecargo ?? totales.ventasRecargo)||0)>0?"+"+fmtN(totales.fiscal303?.ventasRecargo ?? totales.ventasRecargo)+" €":"—"}</td>
+  <td class="num red">${(totales.fiscal303?.ventasRetencion ?? totales.ventasRetencion)>0?"-"+fmtN(totales.fiscal303?.ventasRetencion ?? totales.ventasRetencion)+" €":"—"}</td>
+  <td class="num green">${fmtN((totales.fiscal303?.ventasBase ?? totales.ventasBase)+(totales.fiscal303?.ventasIVA ?? totales.ventasIVA)+((totales.fiscal303?.ventasRecargo ?? totales.ventasRecargo)||0)-(totales.fiscal303?.ventasRetencion ?? totales.ventasRetencion))} €</td>
 </tr>
 <tr><td>IVA Soportado (Gastos)</td>
-  <td class="num red">${fmtN(totales.gastosBase)} €</td>
-  <td class="num red">-${fmtN(totales.gastosIVA)} €</td>
-  <td class="num">${(totales.gastosRecargo||0)>0?"-"+fmtN(totales.gastosRecargo)+" €":"—"}</td>
+  <td class="num red">${fmtN(totales.fiscal303?.gastosBase ?? totales.gastosBase)} €</td>
+  <td class="num red">-${fmtN(totales.fiscal303?.gastosIVA ?? totales.gastosIVA)} €</td>
+  <td class="num">${((totales.fiscal303?.gastosRecargo ?? totales.gastosRecargo)||0)>0?"-"+fmtN(totales.fiscal303?.gastosRecargo ?? totales.gastosRecargo)+" €":"—"}</td>
   <td class="num">—</td>
-  <td class="num red">-${fmtN(totales.gastosBase+totales.gastosIVA+(totales.gastosRecargo||0))} €</td>
+  <td class="num red">-${fmtN((totales.fiscal303?.gastosBase ?? totales.gastosBase)+(totales.fiscal303?.gastosIVA ?? totales.gastosIVA)+((totales.fiscal303?.gastosRecargo ?? totales.gastosRecargo)||0))} €</td>
 </tr>
 <tr class="total-row"><td>DIFERENCIA — Mod. 303</td>
-  <td class="num">${fmtN(totales.ventasBase-totales.gastosBase)} €</td>
-  <td class="num">${fmtN(totales.ventasIVA-totales.gastosIVA)} €</td>
-  <td class="num">${fmtN((totales.ventasRecargo||0)-(totales.gastosRecargo||0))} €</td>
+  <td class="num">${fmtN((totales.fiscal303?.ventasBase ?? totales.ventasBase)-(totales.fiscal303?.gastosBase ?? totales.gastosBase))} €</td>
+  <td class="num">${fmtN((totales.fiscal303?.ventasIVA ?? totales.ventasIVA)-(totales.fiscal303?.gastosIVA ?? totales.gastosIVA))} €</td>
+  <td class="num">${fmtN(((totales.fiscal303?.ventasRecargo ?? totales.ventasRecargo)||0)-((totales.fiscal303?.gastosRecargo ?? totales.gastosRecargo)||0))} €</td>
   <td class="num">—</td>
-  <td class="num" style="font-size:13px;color:${totales.ivaLiquidar>=0?"#fbbf24":"#34d399"}">${fmtN(totales.ivaLiquidar)} €</td>
+  <td class="num" style="font-size:13px;color:${(totales.fiscal303?.ivaLiquidar ?? totales.ivaLiquidar)>=0?"#fbbf24":"#34d399"}">${fmtN(totales.fiscal303?.ivaLiquidar ?? totales.ivaLiquidar)} €</td>
 </tr>
 </tbody></table>
+${(totales.recargoEq?.nVentas||0)>0?`
+<div class="st" style="color:#7e22ce;border-color:#7e22ce">Apéndice — Recargo de Equivalencia (art. 148-163 LIVA)</div>
+<div class="aviso" style="background:#faf5ff;border-color:#e9d5ff;color:#7e22ce">
+<b>Información no declarable en Mod.303.</b> El minorista en recargo de equivalencia no presenta autoliquidación de IVA por esta actividad. El IVA + recargo pagado a proveedores se contabiliza como mayor coste de la mercancía. Los ingresos sí se declaran en IRPF (Mod.130 y renta anual).
+</div>
+<table><thead><tr><th>Concepto</th><th>Base</th><th>IVA informativo</th><th>Coste / Recargo</th><th>Resultado</th></tr></thead>
+<tbody>
+<tr><td>Ventas de tienda (${totales.recargoEq.nVentas} doc${totales.recargoEq.nVentas!==1?"s":""})</td>
+  <td class="num green">+${fmtN(totales.recargoEq.ventasBase)} €</td>
+  <td class="num" style="color:#7e22ce">${fmtN(totales.recargoEq.ivaInformativo)} €</td>
+  <td class="num">—</td>
+  <td class="num green">+${fmtN(totales.recargoEq.ventasBase)} €</td>
+</tr>
+<tr><td>Compras de mercancía (${totales.recargoEq.nGastos} doc${totales.recargoEq.nGastos!==1?"s":""})</td>
+  <td class="num red">-${fmtN(totales.recargoEq.gastosBase)} €</td>
+  <td class="num red">-${fmtN(totales.recargoEq.gastosIVA)} €</td>
+  <td class="num red">-${fmtN(totales.recargoEq.gastosRecargo)} €</td>
+  <td class="num red">-${fmtN(totales.recargoEq.gastosBase+totales.recargoEq.gastosIVA+totales.recargoEq.gastosRecargo)} €</td>
+</tr>
+<tr><td>Coste mercancía vendida (registrado manual)</td>
+  <td class="num">—</td>
+  <td class="num">—</td>
+  <td class="num red">-${fmtN(totales.recargoEq.costeMercancia)} €</td>
+  <td class="num red">-${fmtN(totales.recargoEq.costeMercancia)} €</td>
+</tr>
+<tr class="total-row" style="background:#7e22ce!important"><td>RESULTADO TIENDA (para Mod.130 / IRPF)</td>
+  <td class="num">${fmtN(totales.recargoEq.ventasBase)} €</td>
+  <td class="num">—</td>
+  <td class="num">-${fmtN(totales.recargoEq.costeMercancia)} €</td>
+  <td class="num" style="font-size:13px">${totales.recargoEq.beneficioTienda>=0?"+":""}${fmtN(totales.recargoEq.beneficioTienda)} €</td>
+</tr>
+</tbody></table>`:""}
 ${totales.nominasBruto>0?`<div class="st">Costes laborales</div>
 <table><thead><tr><th>Concepto</th><th>Bruto</th><th>SS trab.</th><th>IRPF retenido</th><th>Neto</th><th>SS empresa</th><th>Coste total</th></tr></thead>
 <tbody><tr>
@@ -4149,6 +4240,474 @@ ${totales.nominasBruto>0?`<div class="st">Costes laborales</div>
 </tr></tbody></table>`:""}
 <div class="footer">ContaAuto · Informe orientativo para gestoría · ${now} · No sustituye asesoramiento fiscal profesional ·
 Pago fraccionado IRPF calculado según art. 110.3 RIRPF (20% rendimiento neto - retenciones soportadas).</div>
+</body></html>`;
+}
+
+
+
+// ════════════════════════════════════════════════════════════
+// INFORME DESGLOSADO POR ACTIVIDAD — portrait / landscape
+// NO modifica calcInformeActividades ni buildInformeGestoriaHTML
+// ════════════════════════════════════════════════════════════
+function buildInformeDesglosadoHTML(data, factsFil, pLabel, empresa, nif, irpf111, irpf115, landscape) {
+  const { actividades, totales } = data;
+  const now = new Date().toLocaleDateString("es-ES", { day:"2-digit", month:"long", year:"numeric" });
+  const fmtN = v => (v||0).toLocaleString("es-ES", { minimumFractionDigits:2, maximumFractionDigits:2 });
+  const pageSize = landscape ? "A4 landscape" : "A4";
+  const pageMargin = landscape ? "10mm 12mm" : "12mm 14mm";
+
+  const css = `
+@page { size:${pageSize}; margin:0; }
+@media print { body { -webkit-print-color-adjust:exact; print-color-adjust:exact; } html { -webkit-print-color-adjust:exact; } }
+body { font-family:'Helvetica Neue',Arial,sans-serif; font-size:9px; color:#0f172a; margin:${pageMargin}; line-height:1.4; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+.hdr { background:#0f172a; color:#fff; padding:12px 16px; margin-bottom:12px; display:flex; justify-content:space-between; align-items:center; border-radius:6px; }
+.hdr h1 { font-size:14px; font-weight:900; margin:0; }
+.hdr p { font-size:7.5px; color:rgba(255,255,255,.5); margin:2px 0 0; }
+.badge { background:#2563eb; color:#fff; padding:2px 8px; border-radius:12px; font-size:7.5px; font-weight:800; text-transform:uppercase; }
+.kpis { display:grid; grid-template-columns:repeat(${landscape?6:4},1fr); gap:6px; margin-bottom:12px; }
+.kpi { border:1px solid #e2e8f0; border-radius:5px; padding:7px 10px; }
+.kpi-l { font-size:6.5px; color:#64748b; text-transform:uppercase; font-weight:700; letter-spacing:.05em; margin-bottom:2px; }
+.kpi-v { font-size:12px; font-weight:900; font-family:monospace; }
+.g { color:#15803d; } .r { color:#dc2626; } .b { color:#1d4ed8; } .a { color:#b45309; } .t { color:#0e7490; }
+.st { font-size:8.5px; font-weight:900; color:#0f172a; text-transform:uppercase; letter-spacing:.07em; margin:14px 0 5px; padding-bottom:2px; border-bottom:2px solid #0f172a; }
+table { width:100%; border-collapse:collapse; font-size:${landscape?8.5:8}px; margin-bottom:14px; }
+thead th { background:#1e293b; color:#fff; padding:4px 7px; text-align:left; font-size:7px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; }
+thead th:not(:first-child) { text-align:right; }
+tbody td { padding:3.5px 7px; border-bottom:1px solid #f1f5f9; vertical-align:middle; }
+tbody tr:nth-child(even) { background:#f8fafc; }
+.n { text-align:right; font-family:monospace; font-weight:600; }
+.act-hdr { background:#1e40af!important; color:#fff; font-weight:900; font-size:${landscape?9:8.5}px; }
+.act-alq { background:#0e7490!important; color:#fff; font-weight:900; }
+.sub { font-size:7px; color:#64748b; }
+.total-row td { background:#0f172a!important; color:#fff; font-weight:900; padding:5px 7px; border:none; font-family:monospace; }
+.fact-num { font-size:7px; color:#94a3b8; }
+.badge-v { background:#059669; color:#fff; padding:1px 5px; border-radius:3px; font-size:6.5px; font-weight:800; }
+.badge-g { background:#dc2626; color:#fff; padding:1px 5px; border-radius:3px; font-size:6.5px; font-weight:800; }
+.badge-alq { background:#0e7490; color:#fff; padding:1px 5px; border-radius:3px; font-size:6.5px; font-weight:800; }
+.footer { margin-top:14px; padding:6px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:4px; font-size:7px; color:#94a3b8; text-align:center; }
+.aviso { background:#fef9c3; border:1px solid #fde68a; border-radius:4px; padding:5px 9px; font-size:7.5px; color:#92400e; margin-bottom:10px; }
+`;
+
+  // Tabla por actividad
+  const colsAct = landscape
+    ? ["Actividad","Base imponible ingr.","IVA repercutido","Ret. IRPF ingr.","Total cobrado","Base gasto/arriend.","IVA soportado","Ret. pagada (111/115)","Total pagado","Resultado neto"]
+    : ["Actividad","Base ingr.","IVA rep.","Ret.ingr.","Total cobrado","Base gasto","IVA sop.","Ret.pagada","Total pagado","Resultado"];
+
+  const filasAct = actividades.map(d => {
+    const esAlquiler = d.actividad.toLowerCase() === "alquiler";
+    const resultado  = d.ventasBase - d.gastosBase - d.nominasCoste;
+    const trClass    = esAlquiler ? "style=\"background:#ecfeff\"" : "";
+    const actLabel   = esAlquiler
+      ? `<span class="badge-alq">MOD.115</span> ${d.actividad}`
+      : d.actividad;
+    const retPagadaLabel = esAlquiler ? "Ret. arrendamiento 19%" : (d.gastosRetencion>0?"Ret. prof.":"—");
+    return `<tr ${trClass}>
+      <td style="font-weight:700">${actLabel}</td>
+      <td class="n g">${d.ventasBase>0?fmtN(d.ventasBase)+" €":"—"}</td>
+      <td class="n b">${d.ventasIVA>0?"+"+fmtN(d.ventasIVA+(d.ventasRecargo||0))+" €":"—"}</td>
+      <td class="n a">${d.ventasRetencion>0?"-"+fmtN(d.ventasRetencion)+" €":"—"}</td>
+      <td class="n" style="font-weight:800">${d.ventasBase>0?fmtN(d.ventasBase+d.ventasIVA+(d.ventasRecargo||0)-d.ventasRetencion)+" €":"—"}</td>
+      <td class="n r">${d.gastosBase>0?fmtN(d.gastosBase)+" €":"—"}</td>
+      <td class="n" style="color:#0369a1">${d.gastosIVA>0?"-"+fmtN(d.gastosIVA)+" €":"—"}</td>
+      <td class="n" style="color:#7e22ce;font-size:6.5px">${d.gastosRetencion>0?"-"+fmtN(d.gastosRetencion)+" € ("+retPagadaLabel+")":"—"}</td>
+      <td class="n r" style="font-weight:800">${d.gastosBase>0?fmtN(d.gastosBase+d.gastosIVA-d.gastosRetencion)+" €":"—"}</td>
+      <td class="n" style="font-weight:900;color:${resultado>=0?"#15803d":"#dc2626"}">${resultado>=0?"+":""}${fmtN(resultado)} €</td>
+    </tr>`;
+  }).join("");
+
+  // Totales actividades
+  const totResultado = totales.ventasBase - totales.gastosBase - totales.nominasCoste;
+  const filaTotales = `<tr class="total-row">
+    <td>TOTALES</td>
+    <td class="n">${fmtN(totales.ventasBase)} €</td>
+    <td class="n">${fmtN(totales.ventasIVA+(totales.ventasRecargo||0))} €</td>
+    <td class="n">${fmtN(totales.ventasRetencion)} €</td>
+    <td class="n">${fmtN(totales.ventasBase+totales.ventasIVA+(totales.ventasRecargo||0)-totales.ventasRetencion)} €</td>
+    <td class="n">${fmtN(totales.gastosBase)} €</td>
+    <td class="n">${fmtN(totales.gastosIVA)} €</td>
+    <td class="n">${fmtN(totales.gastosRetencion||0)} €</td>
+    <td class="n">${fmtN(totales.gastosBase+totales.gastosIVA-(totales.gastosRetencion||0))} €</td>
+    <td class="n" style="color:${totResultado>=0?"#34d399":"#fca5a5"};font-size:11px">${totResultado>=0?"+":""}${fmtN(totResultado)} €</td>
+  </tr>`;
+
+  // Listado de facturas agrupado por actividad
+  const porAct = {};
+  factsFil.forEach(f => {
+    const act = f.actividad || "Sin actividad";
+    if (!porAct[act]) porAct[act] = { ventas:[], gastos:[] };
+    if (f.tipo === "venta") porAct[act].ventas.push(f);
+    else porAct[act].gastos.push(f);
+  });
+
+  const secListado = Object.entries(porAct).sort((a,b)=>a[0].localeCompare(b[0])).map(([act, grp]) => {
+    const esAlquiler = act.toLowerCase() === "alquiler";
+    const ventasRows = grp.ventas.map(f => {
+      const t = calcFacturaReal(f);
+      return `<tr>
+        <td><span class="badge-v">INGRESO</span></td>
+        <td class="fact-num">${f.numero||f.id||"—"}</td>
+        <td>${(f.fecha||"").split("T")[0]}</td>
+        <td style="max-width:180px;overflow:hidden">${f.clienteNombre||f.cliente_nombre||"—"}</td>
+        <td class="n g">${fmtN(t.totalBase)} €</td>
+        <td class="n b">${t.totalIVA>0?"+"+fmtN(t.totalIVA)+" €":"—"}</td>
+        <td class="n a">${t.totalRetencion>0?"-"+fmtN(t.totalRetencion)+" €":"—"}</td>
+        <td class="n" style="font-weight:800">${fmtN(t.total)} €</td>
+      </tr>`;
+    }).join("");
+    const gastosRows = grp.gastos.map(f => {
+      const t = calcFacturaReal(f);
+      const retLabel = esAlquiler ? "Mod.115" : (t.totalRetencion>0?"Mod.111":"—");
+      return `<tr style="background:#fff9f9">
+        <td><span class="badge-g">GASTO</span></td>
+        <td class="fact-num">${f.numero||f.id||"—"}</td>
+        <td>${(f.fecha||"").split("T")[0]}</td>
+        <td style="max-width:180px;overflow:hidden">${f.proveedorNombre||f.proveedor_nombre||f.clienteNombre||f.cliente_nombre||"—"}</td>
+        <td class="n r">${fmtN(t.totalBase)} €</td>
+        <td class="n" style="color:#0369a1">${t.totalIVA>0?"-"+fmtN(t.totalIVA)+" €":"—"}</td>
+        <td class="n" style="color:#7e22ce">${t.totalRetencion>0?"-"+fmtN(t.totalRetencion)+" € ("+retLabel+")":"—"}</td>
+        <td class="n r" style="font-weight:800">-${fmtN(t.totalBase+t.totalIVA-t.totalRetencion)} €</td>
+      </tr>`;
+    }).join("");
+    if (!ventasRows && !gastosRows) return "";
+    const actBadge = esAlquiler ? `<span class="badge-alq">Arrendamiento · Mod.115</span>` : "";
+    return `<tr style="background:#1e293b"><td colspan="8" style="padding:5px 7px;font-weight:900;font-size:8.5px;color:#fff">${act} ${actBadge}</td></tr>
+${ventasRows}${gastosRows}`;
+  }).join("");
+
+  const colsFacturas = ["Tipo","Número","Fecha","Cliente / Proveedor","Base imponible","IVA / Cuota","Ret. e ingreso a cta.","Total"];
+
+  return `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8">
+<title>Informe Desglosado — ${pLabel}</title><style>${css}</style></head><body>
+<div class="hdr">
+  <div><h1>Informe Contable Desglosado por Actividad</h1>
+  <p>${empresa||"Autónomo"}${nif?" · NIF: "+nif:""} · Período: ${pLabel} · ${now}</p></div>
+  <span class="badge">Gestoría AEAT</span>
+</div>
+<div class="aviso">Documento orientativo para facilitar la declaración fiscal. El asesor es responsable de la presentación oficial ante la AEAT.</div>
+<div class="kpis">
+  <div class="kpi"><div class="kpi-l">Base imponible ingresos</div><div class="kpi-v g">+${fmtN(totales.ventasBase)} €</div></div>
+  <div class="kpi"><div class="kpi-l">IVA repercutido</div><div class="kpi-v b">+${fmtN(totales.ventasIVA+(totales.ventasRecargo||0))} €</div></div>
+  <div class="kpi"><div class="kpi-l">Gastos deducibles</div><div class="kpi-v r">-${fmtN(totales.gastosBase+totales.nominasCoste)} €</div></div>
+  <div class="kpi"><div class="kpi-l">Rendimiento neto</div><div class="kpi-v ${totResultado>=0?"g":"r"}">${totResultado>=0?"+":""}${fmtN(totResultado)} €</div></div>
+  <div class="kpi"><div class="kpi-l">IVA neto (Mod. 303)</div><div class="kpi-v ${totales.ivaLiquidar>=0?"r":"g"}">${fmtN(totales.ivaLiquidar)} €</div></div>
+  <div class="kpi"><div class="kpi-l">Ret. arrendamiento (Mod.115)</div><div class="kpi-v t">${fmtN(irpf115)} €</div></div>
+</div>
+<div class="st">Desglose por actividad económica — ${pLabel}</div>
+<table>
+  <thead><tr>${colsAct.map(h=>`<th>${h}</th>`).join("")}</tr></thead>
+  <tbody>${filasAct}${filaTotales}</tbody>
+</table>
+<div class="st">Listado de facturas por actividad — ${pLabel}</div>
+<table>
+  <thead><tr>${colsFacturas.map(h=>`<th>${h}</th>`).join("")}</tr></thead>
+  <tbody>${secListado}</tbody>
+</table>
+<div class="footer">ContaAuto · Informe desglosado ${landscape?"horizontal":"vertical"} · ${now} · Nomenclatura AEAT: art.110 RIRPF (Mod.130) · art.69 RIRPF (Mod.115) · art.76 RIRPF (Mod.111) · No sustituye asesoramiento fiscal profesional.</div>
+</body></html>`;
+}
+
+// ════════════════════════════════════════════════════════════
+// INFORME FISCAL SOLO — Mod.303 / 130 / 111 / 115
+// portrait / landscape — separado del desglose de actividades
+// ════════════════════════════════════════════════════════════
+function buildInformeFiscalSoloHTML(data, pLabel, empresa, nif, irpf111, irpf115, landscape) {
+  const { totales } = data;
+  const now = new Date().toLocaleDateString("es-ES", { day:"2-digit", month:"long", year:"numeric" });
+  const fmtN = v => (v||0).toLocaleString("es-ES", { minimumFractionDigits:2, maximumFractionDigits:2 });
+  const pageSize   = landscape ? "A4 landscape" : "A4";
+  const pageMargin = landscape ? "12mm 16mm" : "14mm 18mm";
+
+  const mod303     = totales.fiscal303?.ivaLiquidar ?? totales.ivaLiquidar;
+  const rndNeto    = totales.beneficioBruto;
+  const mod130     = totales.irpfFraccionado;
+  const mod111     = irpf111 + (totales.gastosRetencion||0);
+  const totalOblig = Math.max(0,mod303) + mod130 + mod111 + irpf115;
+
+  // Prorrata — detectar si hay actividades exentas
+  const baseExenta  = (data.actividades||[]).filter(d=>["western union","ría"].includes(d.actividad.toLowerCase())).reduce((s,d)=>s+d.ventasBase,0);
+  const prorrata    = totales.ventasBase>0 ? Math.round(((totales.ventasBase-baseExenta)/totales.ventasBase)*100) : 100;
+  const hayExentas  = baseExenta > 0;
+  const hayTienda   = (totales.recargoEq?.nVentas||0) > 0;
+
+  const boxMod = (modulo, titulo, color, colorDark, filas, resultado, etiqueta) => `
+<div style="border:1px solid ${color};border-radius:8px;overflow:hidden;margin-bottom:14px">
+  <div style="background:${colorDark};color:#fff;padding:8px 14px;display:flex;align-items:center;gap:10px">
+    <span style="background:#fff;color:${colorDark};font-size:9px;font-weight:900;padding:2px 8px;border-radius:12px">${modulo}</span>
+    <span style="font-size:11px;font-weight:900">${titulo}</span>
+  </div>
+  <div style="padding:10px 14px;background:${color}18">
+    ${filas.map(([label,valor,estilo])=>`
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid ${color}30;font-size:9px">
+      <span style="color:#475569">${label}</span>
+      <span style="font-family:monospace;font-weight:700;${estilo||""}">${valor}</span>
+    </div>`).join("")}
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0 3px;margin-top:4px;border-top:2px solid ${colorDark}40">
+      <span style="font-weight:900;font-size:10px;color:${colorDark}">${etiqueta}</span>
+      <span style="font-family:monospace;font-weight:900;font-size:14px;color:${colorDark}">${fmtN(Math.abs(resultado))} €</span>
+    </div>
+    ${resultado < 0 ? `<p style="font-size:7.5px;color:#15803d;margin:3px 0 0">Resultado negativo → A devolver / A compensar en trimestres siguientes</p>` : ""}
+  </div>
+</div>`;
+
+  const grid = landscape
+    ? `display:grid;grid-template-columns:repeat(2,1fr);gap:16px`
+    : `display:block`;
+
+  const css = `
+@page { size:${pageSize}; margin:0; }
+@media print { body { -webkit-print-color-adjust:exact; print-color-adjust:exact; } html { -webkit-print-color-adjust:exact; } }
+body { font-family:'Helvetica Neue',Arial,sans-serif; font-size:10px; color:#0f172a; margin:${pageMargin}; line-height:1.5; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+.hdr { background:#0f172a; color:#fff; padding:14px 18px; margin-bottom:14px; display:flex; justify-content:space-between; align-items:center; border-radius:6px; }
+.hdr h1 { font-size:15px; font-weight:900; margin:0; }
+.hdr p { font-size:8px; color:rgba(255,255,255,.5); margin:2px 0 0; }
+.badge { background:#2563eb; color:#fff; padding:3px 10px; border-radius:12px; font-size:8px; font-weight:800; text-transform:uppercase; }
+.aviso { background:#fef9c3; border:1px solid #fde68a; border-radius:5px; padding:6px 11px; font-size:8px; color:#92400e; margin-bottom:12px; }
+.resumen { background:#f8fafc; border:2px solid #0f172a; border-radius:8px; padding:12px 16px; margin-bottom:14px; }
+.footer { margin-top:14px; padding:7px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:5px; font-size:7.5px; color:#94a3b8; text-align:center; }
+.prorrata { background:#fef3c7; border:1px solid #fcd34d; border-radius:6px; padding:8px 12px; margin-bottom:12px; font-size:8.5px; }
+`;
+
+  return `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8">
+<title>Informe Fiscal — ${pLabel}</title><style>${css}</style></head><body>
+<div class="hdr">
+  <div><h1>Resumen Fiscal — Modelos AEAT</h1>
+  <p>${empresa||"Autónomo"}${nif?" · NIF: "+nif:""} · Período: ${pLabel} · ${now}</p></div>
+  <span class="badge">Obligaciones tributarias</span>
+</div>
+<div class="aviso">Estimación orientativa para gestoría. El asesor fiscal es responsable de la presentación oficial. Los importes pueden variar según criterio fiscal aplicado.</div>
+
+<div class="resumen">
+  <div style="font-size:8px;font-weight:900;text-transform:uppercase;letter-spacing:.07em;color:#64748b;margin-bottom:8px">Total obligaciones tributarias estimadas — ${pLabel}</div>
+  <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+    <div style="display:flex;gap:16px;flex-wrap:wrap">
+      ${mod303>0?`<div><div style="font-size:7.5px;color:#64748b">Mod. 303 (IVA)</div><div style="font-family:monospace;font-weight:900;font-size:13px;color:#b45309">${fmtN(mod303)} €</div></div>`:""}
+      <div><div style="font-size:7.5px;color:#64748b">Mod. 130 (IRPF)</div><div style="font-family:monospace;font-weight:900;font-size:13px;color:#4338ca">${fmtN(mod130)} €</div></div>
+      ${mod111>0?`<div><div style="font-size:7.5px;color:#64748b">Mod. 111 (Retenciones)</div><div style="font-family:monospace;font-weight:900;font-size:13px;color:#7e22ce">${fmtN(mod111)} €</div></div>`:""}
+      ${irpf115>0?`<div><div style="font-size:7.5px;color:#64748b">Mod. 115 (Alquiler)</div><div style="font-family:monospace;font-weight:900;font-size:13px;color:#0e7490">${fmtN(irpf115)} €</div></div>`:""}
+    </div>
+    <div style="text-align:right">
+      <div style="font-size:8px;color:#64748b">TOTAL A INGRESAR</div>
+      <div style="font-family:monospace;font-weight:900;font-size:20px;color:#dc2626">${fmtN(totalOblig)} €</div>
+    </div>
+  </div>
+</div>
+
+${hayExentas?`<div class="prorrata"><strong>Prorrata de IVA:</strong> Tienes actividades exentas (Western Union, Ría) por ${fmtN(baseExenta)} € sobre total ${fmtN(totales.ventasBase)} € → Prorrata estimada: <strong>${prorrata}%</strong>. El IVA soportado de gastos comunes es deducible solo en ese porcentaje. Regularizar en 4T (Mod. 390).</div>`:""}
+${hayTienda?`<div class="prorrata" style="background:#faf5ff;border-color:#e9d5ff;color:#7e22ce"><strong>Recargo de equivalencia:</strong> La actividad de Tienda (${fmtN(totales.recargoEq.ventasBase)} € de ventas, ${totales.recargoEq.nVentas} resumen${totales.recargoEq.nVentas!==1?"es":""}) está excluida del Mod.303 por aplicarle el régimen especial del art. 148-163 LIVA. El IVA + recargo pagado a proveedores se contabiliza como mayor coste de la mercancía y no es deducible.</div>`:""}
+
+<div style="${grid}">
+${boxMod("MOD. 303","IVA — Impuesto sobre el Valor Añadido"+(hayTienda?" (excluida tienda)":""),"#b45309","#92400e",[
+  ["Base imponible ventas"+(hayTienda?" (sin tienda)":""),fmtN(totales.fiscal303?.ventasBase ?? totales.ventasBase)+" €",""],
+  ["IVA repercutido (cuota devengada)","+"+fmtN((totales.fiscal303?.ventasIVA ?? totales.ventasIVA)+((totales.fiscal303?.ventasRecargo ?? totales.ventasRecargo)||0))+" €","color:#15803d"],
+  [(totales.fiscal303?.ventasRecargo ?? totales.ventasRecargo)>0?"(incl. recargo equivalencia ventas)":"","",""],
+  ["Base imponible gastos"+(hayTienda?" (sin tienda)":""),fmtN(totales.fiscal303?.gastosBase ?? totales.gastosBase)+" €",""],
+  ["IVA soportado deducible","-"+fmtN(totales.fiscal303?.gastosIVA ?? totales.gastosIVA)+" €","color:#dc2626"],
+  ["Diferencia",fmtN(mod303)+" €","font-weight:900"],
+], mod303, mod303>=0?"A INGRESAR":"A DEVOLVER / COMPENSAR")}
+
+${boxMod("MOD. 130","IRPF — Pago fraccionado (art. 110.3 RIRPF)","#4338ca","#3730a3",[
+  ["Ingresos acumulados (base imponible)","+"+fmtN(totales.ventasBase)+" €",""],
+  ["Gastos deducibles acumulados","-"+fmtN(totales.gastosBase+totales.nominasCoste)+" €","color:#dc2626"],
+  ["Rendimiento neto estimado",fmtN(rndNeto)+" €","font-weight:900"],
+  ["Tipo de pago fraccionado","20%",""],
+  ["Cuota íntegra (20% × rendimiento)",fmtN(Math.max(0,rndNeto)*0.20)+" €",""],
+  ["(-) Retenciones e ingresos a cuenta soportados",totales.ventasRetencion>0?"-"+fmtN(totales.ventasRetencion)+" €":"0,00 €","color:#dc2626"],
+], mod130, "PAGO FRACCIONADO")}
+
+${mod111>0?boxMod("MOD. 111","IRPF — Retenciones e ingresos a cuenta (art. 76 RIRPF)","#7e22ce","#6b21a8",[
+  ["Retenciones practicadas en nóminas","+"+fmtN(irpf111)+" €",""],
+  ["Retenciones a profesionales externos","+"+fmtN(totales.gastosRetencion||0)+" €",""],
+  ["Total perceptores del período","Ver libro de retenciones","font-size:7.5px"],
+], mod111, "A INGRESAR"):""}
+
+${irpf115>0?boxMod("MOD. 115","Retenciones sobre arrendamiento de inmuebles urbanos (art. 69 RIRPF)","#0e7490","#0c6578",[
+  ["Base arrendamiento del período",fmtN(totales.gastosBase)+" €","font-size:8px"],
+  ["(solo facturas actividad Alquiler)","","font-size:7px;color:#94a3b8"],
+  ["Tipo de retención aplicado","19%","font-weight:900"],
+  ["Retención practicada al arrendador","-"+fmtN(irpf115)+" €","color:#dc2626"],
+  ["Importe ingresado al propietario",fmtN((data.actividades||[]).find(d=>d.actividad.toLowerCase()==="alquiler")?.gastosBase*1.21-irpf115||0)+" €","font-size:8px"],
+], irpf115, "A INGRESAR — Mod. 115"):""}
+</div>
+
+<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;padding:10px 14px;font-size:8.5px;margin-bottom:12px">
+  <strong style="color:#15803d">Retenciones soportadas en ingresos (reducen Mod.130):</strong>
+  ${totales.ventasRetencion>0
+    ? `${fmtN(totales.ventasRetencion)} € — te han retenido clientes: BELLASCELTA, Western Union, Ría, XFERA, Tecalis, WEWI Mobile. Ya descontadas del pago fraccionado IRPF.`
+    : "Sin retenciones soportadas en este período."}
+</div>
+
+<div class="footer">ContaAuto · Informe fiscal ${landscape?"horizontal":"vertical"} · ${now} ·
+Mod.130: art.110.3 RIRPF estimación directa simplificada · Mod.111: art.76 RIRPF · Mod.115: art.69 RIRPF · Mod.303: Ley 37/1992 LIVA ·
+Exenciones IVA: art.20.1.18 LIVA (Western Union, Ría) · No sustituye asesoramiento fiscal profesional</div>
+</body></html>`;
+}
+
+
+
+
+// ── Post-procesadores HTML gestoria (no tocan las funciones originales) ──────
+// Elimina la sección "Estimación modelos AEAT" del informe de gestoría
+function stripEstimacionAEAT(html) {
+  // Elimina la sección "Estimación modelos AEAT" completa usando indexOf — sin regex
+  // Busca el inicio de la sección AEAT y el inicio de la siguiente sección
+  const INI = '<div class="st">Estimaci\u00f3n modelos AEAT';
+  const FIN = '<div class="st">Desglose por actividad econ\u00f3mica</div>';
+  const i1  = html.indexOf(INI);
+  const i2  = html.indexOf(FIN);
+  if (i1 === -1 || i2 === -1 || i2 <= i1) return html; // seguro: si no encuentra, devuelve intacto
+  return html.slice(0, i1) + html.slice(i2);
+}
+// Convierte el HTML de gestoría (portrait) a landscape cambiando el CSS de @page
+function toGestoriaLandscape(html) {
+  return html
+    .replace(/@page\{size:A4;margin:0\}/, "@page{size:A4 landscape;margin:0}")
+    .replace("padding:16px 20px", "padding:10px 16px")
+    .replace("grid-template-columns:repeat(4,1fr)", "grid-template-columns:repeat(6,1fr)")
+    .replace(/\.kpis\{display:grid;grid-template-columns:repeat\(4,1fr\)/, ".kpis{display:grid;grid-template-columns:repeat(6,1fr)")
+    .replace(".fiscal{display:grid;grid-template-columns:repeat(3,1fr)", ".fiscal{display:grid;grid-template-columns:repeat(4,1fr)")
+    .replace("font-size:11px", "font-size:9.5px");
+}
+
+// ════════════════════════════════════════════════════════════
+// RESUMEN ACTIVIDADES SIN ESTIMACIONES FISCALES (para gestoría)
+// Solo desglose por actividad — sin Mod.303/130/111/115
+// ════════════════════════════════════════════════════════════
+function buildResumenActividadesSinFiscalHTML(data, factsFil, pLabel, empresa, nif, landscape) {
+  const { actividades, totales } = data;
+  const now = new Date().toLocaleDateString("es-ES", { day:"2-digit", month:"long", year:"numeric" });
+  const fmtN = v => (v||0).toLocaleString("es-ES", { minimumFractionDigits:2, maximumFractionDigits:2 });
+  const pageSize   = landscape ? "A4 landscape" : "A4";
+  const pageMargin = landscape ? "10mm 14mm" : "14mm 16mm";
+  const cols = landscape
+    ? ["Actividad","Docs.","Base imponible","IVA repercutido","Ret. IRPF soportada","Total cobrado","Gastos (base)","IVA soportado","Ret. pagada","Total pagado","Resultado neto"]
+    : ["Actividad","Docs.","Base imponible","IVA repercutido","Ret.soportada","Total cobrado","Gastos","IVA sop.","Ret.pag.","Total pag.","Resultado"];
+
+  const filasAct = actividades.map(d => {
+    const esAlquiler = d.actividad.toLowerCase() === "alquiler";
+    const resultado  = d.ventasBase - d.gastosBase - d.nominasCoste;
+    const retGasLabel = esAlquiler ? "Mod.115 19%" : (d.gastosRetencion>0 ? "Mod.111" : "—");
+    return `<tr style="${esAlquiler?"background:#ecfeff":""}">
+      <td style="font-weight:700;border-left:3px solid ${esAlquiler?"#0e7490":"#3b82f6"}">${d.actividad}${esAlquiler?" <small style='color:#0e7490'>(arrendamiento)</small>":""}</td>
+      <td style="text-align:center">${d.nVentas+d.nGastos}</td>
+      <td style="text-align:right;color:#15803d;font-family:monospace;font-weight:700">${d.ventasBase>0?fmtN(d.ventasBase)+" €":"—"}</td>
+      <td style="text-align:right;color:#1d4ed8;font-family:monospace">${d.ventasIVA>0?"+"+fmtN(d.ventasIVA+(d.ventasRecargo||0))+" €":"—"}</td>
+      <td style="text-align:right;color:#b45309;font-family:monospace">${d.ventasRetencion>0?"-"+fmtN(d.ventasRetencion)+" €":"—"}</td>
+      <td style="text-align:right;font-family:monospace;font-weight:800">${d.ventasBase>0?fmtN(d.ventasBase+d.ventasIVA+(d.ventasRecargo||0)-d.ventasRetencion)+" €":"—"}</td>
+      <td style="text-align:right;color:#dc2626;font-family:monospace">${d.gastosBase>0?fmtN(d.gastosBase)+" €":"—"}</td>
+      <td style="text-align:right;color:#0369a1;font-family:monospace">${d.gastosIVA>0?"-"+fmtN(d.gastosIVA)+" €":"—"}</td>
+      <td style="text-align:right;color:#7e22ce;font-family:monospace;font-size:7.5px">${d.gastosRetencion>0?"-"+fmtN(d.gastosRetencion)+" € "+retGasLabel:"—"}</td>
+      <td style="text-align:right;color:#dc2626;font-family:monospace;font-weight:800">${d.gastosBase>0?fmtN(d.gastosBase+d.gastosIVA-d.gastosRetencion)+" €":"—"}</td>
+      <td style="text-align:right;font-family:monospace;font-weight:900;color:${resultado>=0?"#15803d":"#dc2626"}">${resultado>=0?"+":""}${fmtN(resultado)} €</td>
+    </tr>`;
+  }).join("");
+
+  const totResultado = totales.ventasBase - totales.gastosBase - totales.nominasCoste;
+
+  // Listado facturas por actividad
+  const porAct = {};
+  factsFil.forEach(f => {
+    const act = f.actividad || "Sin actividad";
+    if (!porAct[act]) porAct[act] = { ventas:[], gastos:[] };
+    if (f.tipo === "venta") porAct[act].ventas.push(f);
+    else porAct[act].gastos.push(f);
+  });
+
+  const listaFacturas = Object.entries(porAct).sort((a,b)=>a[0].localeCompare(b[0])).map(([act, grp]) => {
+    const esAlq = act.toLowerCase() === "alquiler";
+    const rows = [...grp.ventas.map(f => {
+      const t = calcFacturaReal(f);
+      return `<tr>
+        <td style="color:#059669;font-weight:700;font-size:7px">INGRESO</td>
+        <td style="font-size:7px;color:#94a3b8">${f.numero||f.id||"—"}</td>
+        <td>${(f.fecha||"").split("T")[0]}</td>
+        <td style="max-width:200px">${f.clienteNombre||f.cliente_nombre||"—"}</td>
+        <td style="text-align:right;color:#15803d;font-family:monospace">${fmtN(t.totalBase)} €</td>
+        <td style="text-align:right;color:#1d4ed8;font-family:monospace">${t.totalIVA>0?"+"+fmtN(t.totalIVA)+" €":"—"}</td>
+        <td style="text-align:right;color:#b45309;font-family:monospace">${t.totalRetencion>0?"-"+fmtN(t.totalRetencion)+" €":"—"}</td>
+        <td style="text-align:right;font-family:monospace;font-weight:800">${fmtN(t.total)} €</td>
+      </tr>`;
+    }), ...grp.gastos.map(f => {
+      const t = calcFacturaReal(f);
+      const retLabel = esAlq ? "Mod.115" : (t.totalRetencion>0?"Mod.111":"—");
+      return `<tr style="background:#fff5f5">
+        <td style="color:#dc2626;font-weight:700;font-size:7px">GASTO</td>
+        <td style="font-size:7px;color:#94a3b8">${f.numero||f.id||"—"}</td>
+        <td>${(f.fecha||"").split("T")[0]}</td>
+        <td style="max-width:200px">${f.proveedorNombre||f.proveedor_nombre||f.clienteNombre||f.cliente_nombre||"—"}</td>
+        <td style="text-align:right;color:#dc2626;font-family:monospace">${fmtN(t.totalBase)} €</td>
+        <td style="text-align:right;color:#0369a1;font-family:monospace">${t.totalIVA>0?"-"+fmtN(t.totalIVA)+" €":"—"}</td>
+        <td style="text-align:right;color:#7e22ce;font-family:monospace">${t.totalRetencion>0?"-"+fmtN(t.totalRetencion)+" ("+retLabel+")":"—"}</td>
+        <td style="text-align:right;color:#dc2626;font-family:monospace;font-weight:800">-${fmtN(t.totalBase+t.totalIVA-t.totalRetencion)} €</td>
+      </tr>`;
+    })].join("");
+    if (!rows) return "";
+    return `<tr style="background:#1e293b"><td colspan="8" style="padding:4px 8px;color:#fff;font-weight:900;font-size:8.5px">${act}${esAlq?" — Arrendamiento · Mod.115 art.69 RIRPF":""}</td></tr>${rows}`;
+  }).join("");
+
+  const css = `
+@page { size:${pageSize}; margin:0; }
+@media print { body { -webkit-print-color-adjust:exact; print-color-adjust:exact; } html { -webkit-print-color-adjust:exact; } }
+body { font-family:'Helvetica Neue',Arial,sans-serif; font-size:${landscape?8.5:8}px; color:#0f172a; margin:${pageMargin}; line-height:1.4; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+.hdr { background:#0f172a; color:#fff; padding:11px 15px; margin-bottom:11px; display:flex; justify-content:space-between; align-items:center; border-radius:5px; }
+.hdr h1 { font-size:13px; font-weight:900; margin:0; }
+.hdr p  { font-size:7.5px; color:rgba(255,255,255,.5); margin:2px 0 0; }
+.badge { background:#059669; color:#fff; padding:2px 9px; border-radius:12px; font-size:7.5px; font-weight:800; text-transform:uppercase; }
+.kpis { display:grid; grid-template-columns:repeat(${landscape?5:3},1fr); gap:6px; margin-bottom:11px; }
+.kpi { border:1px solid #e2e8f0; border-radius:5px; padding:6px 10px; }
+.kpi-l { font-size:6.5px; color:#64748b; text-transform:uppercase; font-weight:700; margin-bottom:2px; }
+.kpi-v { font-size:12px; font-weight:900; font-family:monospace; }
+.g{color:#15803d}.r{color:#dc2626}.b{color:#1d4ed8}.t{color:#0e7490}
+.st { font-size:8px; font-weight:900; text-transform:uppercase; letter-spacing:.07em; margin:12px 0 5px; padding-bottom:2px; border-bottom:2px solid #0f172a; }
+table { width:100%; border-collapse:collapse; font-size:${landscape?8:7.5}px; margin-bottom:12px; }
+thead th { background:#1e293b; color:#fff; padding:4px 7px; text-align:left; font-size:7px; font-weight:700; text-transform:uppercase; }
+thead th:not(:first-child):not(:nth-child(2)) { text-align:right; }
+tbody td { padding:3px 7px; border-bottom:1px solid #f1f5f9; }
+tbody tr:hover { background:#f8fafc; }
+.tot td { background:#0f172a!important; color:#fff; font-family:monospace; font-weight:900; padding:5px 7px; border:none; }
+.aviso { background:#f0fdf4; border:1px solid #bbf7d0; border-radius:4px; padding:5px 9px; font-size:7.5px; color:#15803d; margin-bottom:9px; }
+.footer { margin-top:12px; padding:5px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:4px; font-size:7px; color:#94a3b8; text-align:center; }
+`;
+
+  return `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8">
+<title>Desglose Actividades — ${pLabel}</title><style>${css}</style></head><body>
+<div class="hdr">
+  <div><h1>Desglose por Actividad Económica</h1>
+  <p>${empresa||"Autónomo"}${nif?" · NIF: "+nif:""} · Período: ${pLabel} · ${now}</p></div>
+  <span class="badge">Para gestoría</span>
+</div>
+<div class="aviso">Documento de ingresos y gastos por actividad para entrega a gestoría. No incluye estimaciones de modelos AEAT — esas las calcula el asesor fiscal.</div>
+<div class="kpis">
+  <div class="kpi"><div class="kpi-l">Ingresos (base imponible)</div><div class="kpi-v g">+${fmtN(totales.ventasBase)} €</div></div>
+  <div class="kpi"><div class="kpi-l">IVA repercutido total</div><div class="kpi-v b">+${fmtN(totales.ventasIVA+(totales.ventasRecargo||0))} €</div></div>
+  <div class="kpi"><div class="kpi-l">Gastos deducibles (base)</div><div class="kpi-v r">-${fmtN(totales.gastosBase+totales.nominasCoste)} €</div></div>
+  <div class="kpi"><div class="kpi-l">IVA soportado total</div><div class="kpi-v" style="color:#0369a1">-${fmtN(totales.gastosIVA)} €</div></div>
+  <div class="kpi"><div class="kpi-l">Rendimiento neto estimado</div><div class="kpi-v ${totResultado>=0?"g":"r"}">${totResultado>=0?"+":""}${fmtN(totResultado)} €</div></div>
+</div>
+<div class="st">Resumen por actividad — ${pLabel}</div>
+<table>
+  <thead><tr>${cols.map(h=>`<th>${h}</th>`).join("")}</tr></thead>
+  <tbody>
+    ${filasAct}
+    <tr class="tot">
+      <td>TOTALES</td><td style="text-align:center">${totales.nVentas+totales.nGastos}</td>
+      <td style="text-align:right">${fmtN(totales.ventasBase)} €</td>
+      <td style="text-align:right">${fmtN(totales.ventasIVA+(totales.ventasRecargo||0))} €</td>
+      <td style="text-align:right">${fmtN(totales.ventasRetencion)} €</td>
+      <td style="text-align:right">${fmtN(totales.ventasBase+totales.ventasIVA+(totales.ventasRecargo||0)-totales.ventasRetencion)} €</td>
+      <td style="text-align:right">${fmtN(totales.gastosBase)} €</td>
+      <td style="text-align:right">${fmtN(totales.gastosIVA)} €</td>
+      <td style="text-align:right">${fmtN(totales.gastosRetencion||0)} €</td>
+      <td style="text-align:right">${fmtN(totales.gastosBase+totales.gastosIVA-(totales.gastosRetencion||0))} €</td>
+      <td style="text-align:right;font-size:11px;color:${totResultado>=0?"#34d399":"#fca5a5"}">${totResultado>=0?"+":""}${fmtN(totResultado)} €</td>
+    </tr>
+  </tbody>
+</table>
+<div class="st">Listado de facturas por actividad — ${pLabel}</div>
+<table>
+  <thead><tr><th>Tipo</th><th>Número</th><th>Fecha</th><th>Cliente / Proveedor</th><th>Base imponible</th><th>IVA / Cuota</th><th>Ret. e ingreso a cta.</th><th>Total</th></tr></thead>
+  <tbody>${listaFacturas}</tbody>
+</table>
+<div class="footer">ContaAuto · Solo desglose actividades ${landscape?"horizontal":"vertical"} · ${now} · Nomenclatura AEAT: base imponible (art.78 LIVA) · cuota de IVA (art.90 LIVA) · retención e ingreso a cuenta (art.69/76 RIRPF) · Sin estimaciones fiscales · No sustituye asesoramiento profesional</div>
 </body></html>`;
 }
 
@@ -4180,14 +4739,48 @@ function VistaInformeGestoria({ facturas, nominas, actividades }) {
     [nominas, mode, value, year]
   );
 
+  // Facturas filtradas por período (para listado en informes nuevos)
+  const factsFil = React.useMemo(() =>
+    facturas.filter(f => matchesPeriod(f, mode, value, year)),
+    [facturas, mode, value, year]
+  );
+
+  // Mod.115 — retenciones sobre alquiler del período
+  const irpf115Gest = React.useMemo(() =>
+    facturas.filter(f => matchesPeriod(f, mode, value, year) && f.tipo === "gasto" && (f.actividad||"").toLowerCase() === "alquiler")
+      .reduce((s,f) => s + (calcFacturaReal(f).totalRetencion||0), 0),
+    [facturas, mode, value, year]
+  );
+
+  // Gestoría: siempre SIN estimaciones AEAT (sinFiscal=true)
   const handlePrint = () => {
-    const html = buildInformeGestoriaHTML(data, pLabel, empDef.nombre, empDef.nif, irpf111Nom);
+    const html = buildInformeGestoriaHTML(data, pLabel, empDef.nombre, empDef.nif, irpf111Nom, true);
     openPrint(html);
   };
   const handlePDF = () => {
-    const html = buildInformeGestoriaHTML(data, pLabel, empDef.nombre, empDef.nif, irpf111Nom);
+    const html = buildInformeGestoriaHTML(data, pLabel, empDef.nombre, empDef.nif, irpf111Nom, true);
     downloadPDF(html, "informe-gestoria-" + pLabel.replace(/ /g,"-").toLowerCase() + ".pdf");
   };
+  // Uso interno: CON estimaciones AEAT
+  const handlePDFInterno = () => {
+    const html = buildInformeGestoriaHTML(data, pLabel, empDef.nombre, empDef.nif, irpf111Nom, false);
+    downloadPDF(html, "informe-interno-" + pLabel.replace(/ /g,"-").toLowerCase() + ".pdf");
+  };
+
+  // Handlers — desglose con/sin fiscal + resumen horizontal
+  const handleDesglosadoV  = () => downloadPDF(buildInformeDesglosadoHTML(data, factsFil, pLabel, empDef.nombre, empDef.nif, irpf111Nom, irpf115Gest, false), `desglose-vertical-${pLabel.replace(/ /g,"-")}.pdf`);
+  const handleDesglosadoH  = () => downloadPDF(buildInformeDesglosadoHTML(data, factsFil, pLabel, empDef.nombre, empDef.nif, irpf111Nom, irpf115Gest, true),  `desglose-horizontal-${pLabel.replace(/ /g,"-")}.pdf`);
+  const handleFiscalV      = () => downloadPDF(buildInformeFiscalSoloHTML(data, pLabel, empDef.nombre, empDef.nif, irpf111Nom, irpf115Gest, false), `fiscal-vertical-${pLabel.replace(/ /g,"-")}.pdf`);
+  const handleFiscalH      = () => downloadPDF(buildInformeFiscalSoloHTML(data, pLabel, empDef.nombre, empDef.nif, irpf111Nom, irpf115Gest, true),  `fiscal-horizontal-${pLabel.replace(/ /g,"-")}.pdf`);
+  // Solo desglose actividades SIN estimaciones fiscales — para entregar a gestoría
+  const handleSoloActV     = () => downloadPDF(buildResumenActividadesSinFiscalHTML(data, factsFil, pLabel, empDef.nombre, empDef.nif, false), `actividades-gestoria-vertical-${pLabel.replace(/ /g,"-")}.pdf`);
+  const handleSoloActH     = () => downloadPDF(buildResumenActividadesSinFiscalHTML(data, factsFil, pLabel, empDef.nombre, empDef.nif, true),  `actividades-gestoria-horizontal-${pLabel.replace(/ /g,"-")}.pdf`);
+  // Resumen completo SIN estimaciones AEAT (vertical + horizontal)
+  const handleResumenSinFiscalV = () => downloadPDF(buildInformeGestoriaHTML(data, pLabel, empDef.nombre, empDef.nif, irpf111Nom, true),  `resumen-gestoria-vertical-${pLabel.replace(/ /g,"-")}.pdf`);
+  const handleResumenSinFiscalH = () => downloadPDF(toGestoriaLandscape(buildInformeGestoriaHTML(data, pLabel, empDef.nombre, empDef.nif, irpf111Nom, true)),  `resumen-gestoria-horizontal-${pLabel.replace(/ /g,"-")}.pdf`);
+  // Uso interno CON estimaciones AEAT (horizontal)
+  const handleResumenComplH = () => downloadPDF(toGestoriaLandscape(buildInformeGestoriaHTML(data, pLabel, empDef.nombre, empDef.nif, irpf111Nom, false)), `resumen-interno-horizontal-${pLabel.replace(/ /g,"-")}.pdf`);
+
   const toggle = (act) => setExpandidas(p => ({...p, [act]: !p[act]}));
   const colorB = (v) => v >= 0 ? "text-emerald-700" : "text-rose-600";
 
@@ -4204,9 +4797,55 @@ function VistaInformeGestoria({ facturas, nominas, actividades }) {
             <h2 className="text-xl font-black">Resultados por Actividad — {pLabel}</h2>
             <p className="text-sm text-white/50 mt-0.5">{empDef.nombre || "Autónomo"}{empDef.nif ? " · NIF: " + empDef.nif : ""}</p>
           </div>
-          <div className="flex gap-2 flex-shrink-0 flex-wrap">
-            <button onClick={handlePrint} className="flex items-center gap-2 px-4 py-2.5 bg-white/10 hover:bg-white/20 border border-white/20 rounded-xl text-xs font-bold transition-colors">{Ico.print} Imprimir</button>
-            <button onClick={handlePDF} className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 rounded-xl text-xs font-bold transition-colors shadow-lg">{Ico.pdf} PDF Gestoría</button>
+          {/* Panel de descarga — período activo visible en cada botón */}
+          <div className="bg-white/5 border border-white/10 rounded-xl p-3 space-y-2.5 min-w-72">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-black text-white/60 uppercase tracking-widest">Descargar — {pLabel}</span>
+            </div>
+            {/* Para gestoría — SIN estimaciones AEAT */}
+            <div className="border border-emerald-500/30 rounded-lg p-2 space-y-1.5">
+              <div className="text-xs font-black text-emerald-400 uppercase tracking-widest mb-1">Para gestoría (sin AEAT)</div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs text-white/50 w-28">Resumen actividades</span>
+                <div className="flex gap-1">
+                  <button onClick={handlePrint} className="px-2.5 py-1.5 bg-white/10 hover:bg-white/20 border border-white/20 rounded-lg text-xs font-bold transition-colors">{Ico.print}</button>
+                  <button onClick={handlePDF} className="px-2.5 py-1.5 bg-emerald-700 hover:bg-emerald-600 rounded-lg text-xs font-bold transition-colors">↕ PDF</button>
+                  <button onClick={handleResumenSinFiscalH} className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded-lg text-xs font-bold transition-colors">↔ PDF</button>
+                </div>
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs text-white/50 w-28">Solo actividades + facturas</span>
+                <div className="flex gap-1">
+                  <button onClick={handleSoloActV} className="px-2.5 py-1.5 bg-violet-700 hover:bg-violet-600 rounded-lg text-xs font-bold transition-colors">↕ PDF</button>
+                  <button onClick={handleSoloActH} className="px-2.5 py-1.5 bg-violet-600 hover:bg-violet-500 rounded-lg text-xs font-bold transition-colors">↔ PDF</button>
+                </div>
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs text-white/50 w-28">Desglose completo</span>
+                <div className="flex gap-1">
+                  <button onClick={handleDesglosadoV} className="px-2.5 py-1.5 bg-sky-700 hover:bg-sky-600 rounded-lg text-xs font-bold transition-colors">↕ PDF</button>
+                  <button onClick={handleDesglosadoH} className="px-2.5 py-1.5 bg-sky-600 hover:bg-sky-500 rounded-lg text-xs font-bold transition-colors">↔ PDF</button>
+                </div>
+              </div>
+            </div>
+            {/* Uso interno — CON estimaciones AEAT */}
+            <div className="border border-orange-500/30 rounded-lg p-2 space-y-1.5">
+              <div className="text-xs font-black text-orange-400 uppercase tracking-widest mb-1">Uso interno (con estimaciones)</div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs text-white/50 w-28">Resumen + AEAT</span>
+                <div className="flex gap-1">
+                  <button onClick={handlePDFInterno} className="px-2.5 py-1.5 bg-orange-700 hover:bg-orange-600 rounded-lg text-xs font-bold transition-colors">↕ PDF</button>
+                  <button onClick={handleResumenComplH} className="px-2.5 py-1.5 bg-orange-600 hover:bg-orange-500 rounded-lg text-xs font-bold transition-colors">↔ PDF</button>
+                </div>
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs text-white/50 w-28">Solo modelos AEAT</span>
+                <div className="flex gap-1">
+                  <button onClick={handleFiscalV} className="px-2.5 py-1.5 bg-teal-700 hover:bg-teal-600 rounded-lg text-xs font-bold transition-colors">↕ PDF</button>
+                  <button onClick={handleFiscalH} className="px-2.5 py-1.5 bg-teal-600 hover:bg-teal-500 rounded-lg text-xs font-bold transition-colors">↔ PDF</button>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -4258,10 +4897,10 @@ function VistaInformeGestoria({ facturas, nominas, actividades }) {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 bg-slate-100 p-1 rounded-xl">
-        {[["resumen","Por actividad"],["fiscal","Resumen fiscal (303/130/111)"],["laboral","Costes laborales"]].map(([id,lbl]) => (
+      <div className="flex gap-1 bg-slate-100 p-1 rounded-xl flex-wrap">
+        {[["resumen","Por actividad"],["fiscal","Resumen fiscal (303/130/111)"],["recargoEq","Recargo equivalencia"],["laboral","Costes laborales"]].map(([id,lbl]) => (
           <button key={id} onClick={() => setTab(id)}
-            className={`flex-1 py-2.5 text-sm font-bold rounded-lg transition-all ${tab===id?"bg-white text-slate-900 shadow-sm":"text-slate-500 hover:text-slate-700"}`}>{lbl}</button>
+            className={`flex-1 min-w-[120px] py-2.5 text-sm font-bold rounded-lg transition-all ${tab===id?"bg-white text-slate-900 shadow-sm":"text-slate-500 hover:text-slate-700"}`}>{lbl}</button>
         ))}
       </div>
 
@@ -4389,14 +5028,19 @@ function VistaInformeGestoria({ facturas, nominas, actividades }) {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="bg-amber-50 border border-amber-200 rounded-2xl p-5">
               <div className="flex items-center gap-2 mb-3"><span className="bg-amber-600 text-white text-xs font-black px-2 py-0.5 rounded">MOD. 303</span><span className="text-sm font-bold text-amber-900">IVA</span></div>
+              {(totales.recargoEq?.nVentas||0)>0 && (
+                <div className="mb-3 bg-violet-50 border border-violet-200 rounded-lg px-2.5 py-1.5 text-xs text-violet-800">
+                  <span className="font-bold">Tienda excluida</span> del 303 (recargo equivalencia, art.148-163 LIVA). Ver pestaña dedicada.
+                </div>
+              )}
               <div className="space-y-2 text-sm">
-                <div className="flex justify-between"><span className="text-gray-600">Base repercutida</span><span className="font-mono">{fmt(totales.ventasBase)}</span></div>
-                <div className="flex justify-between"><span className="text-gray-600">IVA repercutido</span><span className="font-mono text-emerald-700">+{fmt(totales.ventasIVA)}</span></div>
-                {(totales.ventasRecargo||0)>0&&<div className="flex justify-between"><span className="text-gray-600">Rec. equiv. ventas</span><span className="font-mono text-amber-700">+{fmt(totales.ventasRecargo)}</span></div>}
-                <div className="flex justify-between"><span className="text-gray-600">IVA soportado</span><span className="font-mono text-rose-600">-{fmt(totales.gastosIVA)}</span></div>
-                {(totales.gastosRecargo||0)>0&&<div className="flex justify-between"><span className="text-gray-600">Rec. equiv. gastos</span><span className="font-mono text-amber-700">-{fmt(totales.gastosRecargo)}</span></div>}
+                <div className="flex justify-between"><span className="text-gray-600">Base repercutida</span><span className="font-mono">{fmt(totales.fiscal303?.ventasBase ?? totales.ventasBase)}</span></div>
+                <div className="flex justify-between"><span className="text-gray-600">IVA repercutido</span><span className="font-mono text-emerald-700">+{fmt(totales.fiscal303?.ventasIVA ?? totales.ventasIVA)}</span></div>
+                {((totales.fiscal303?.ventasRecargo ?? totales.ventasRecargo)||0)>0&&<div className="flex justify-between"><span className="text-gray-600">Rec. equiv. ventas</span><span className="font-mono text-amber-700">+{fmt(totales.fiscal303?.ventasRecargo ?? totales.ventasRecargo)}</span></div>}
+                <div className="flex justify-between"><span className="text-gray-600">IVA soportado</span><span className="font-mono text-rose-600">-{fmt(totales.fiscal303?.gastosIVA ?? totales.gastosIVA)}</span></div>
+                {((totales.fiscal303?.gastosRecargo ?? totales.gastosRecargo)||0)>0&&<div className="flex justify-between"><span className="text-gray-600">Rec. equiv. gastos</span><span className="font-mono text-amber-700">-{fmt(totales.fiscal303?.gastosRecargo ?? totales.gastosRecargo)}</span></div>}
                 <div className="flex justify-between font-black text-base border-t border-amber-300 pt-2 text-amber-900">
-                  <span>{totales.ivaLiquidar>=0?"A INGRESAR":"A DEVOLVER"}</span><span className="font-mono">{fmt(Math.abs(totales.ivaLiquidar))}</span>
+                  <span>{(totales.fiscal303?.ivaLiquidar ?? totales.ivaLiquidar)>=0?"A INGRESAR":"A DEVOLVER"}</span><span className="font-mono">{fmt(Math.abs(totales.fiscal303?.ivaLiquidar ?? totales.ivaLiquidar))}</span>
                 </div>
               </div>
             </div>
@@ -4420,10 +5064,26 @@ function VistaInformeGestoria({ facturas, nominas, actividades }) {
               </div>
               <div className="mt-3 text-xs text-violet-600 bg-violet-100 rounded-lg p-2.5">SS total TGSS: {fmt((totales.nominasSSTrab||0)+(totales.nominasSSEmp||0))}</div>
             </div>
+            {irpf115Gest > 0 && (
+            <div className="bg-teal-50 border border-teal-200 rounded-2xl p-5">
+              <div className="flex items-center gap-2 mb-3"><span className="bg-teal-600 text-white text-xs font-black px-2 py-0.5 rounded">MOD. 115</span><span className="text-sm font-bold text-teal-900">Alquiler</span></div>
+              <div className="space-y-2 text-sm">
+                <div className="flex justify-between"><span className="text-gray-600">Base arrendamiento</span><span className="font-mono">{fmt((data.actividades||[]).find(d=>d.actividad.toLowerCase()==="alquiler")?.gastosBase||0)}</span></div>
+                <div className="flex justify-between"><span className="text-gray-600">Tipo retención</span><span className="font-mono">19%</span></div>
+                <div className="flex justify-between font-black text-base border-t border-teal-300 pt-2 text-teal-900"><span>A INGRESAR (Mod.115)</span><span className="font-mono">{fmt(irpf115Gest)}</span></div>
+              </div>
+              <div className="mt-3 text-xs text-teal-700 bg-teal-100 rounded-lg p-2.5">Art. 69 RIRPF · Distinto del Mod.111 · Presentar por separado</div>
+            </div>
+            )}
           </div>
           {/* Libro IVA */}
           <div className="bg-white border border-gray-200 rounded-2xl overflow-hidden shadow-sm">
-            <div className="px-5 py-3 border-b border-gray-100 font-black text-sm text-gray-800">Libro de IVA — {pLabel}</div>
+            <div className="px-5 py-3 border-b border-gray-100 font-black text-sm text-gray-800">Libro de IVA (solo régimen general, Mod.303) — {pLabel}</div>
+            {(totales.recargoEq?.nVentas||0)>0 && (
+              <div className="px-5 py-2 bg-violet-50 border-b border-violet-200 text-xs text-violet-800">
+                No incluye la actividad de <span className="font-bold">Tienda</span> (recargo de equivalencia). Ver pestaña específica.
+              </div>
+            )}
             <table className="w-full text-sm">
               <thead className="bg-slate-900">
                 <tr>{["Concepto","Base imponible","Cuota IVA","Rec. equiv.","Retención IRPF","Total"].map((h,i) => (
@@ -4433,31 +5093,121 @@ function VistaInformeGestoria({ facturas, nominas, actividades }) {
               <tbody>
                 <tr className="border-b border-gray-100 bg-emerald-50/30">
                   <td className="py-2.5 px-4 font-semibold text-emerald-800">IVA Repercutido (Ventas)</td>
-                  <td className="py-2.5 px-4 text-right font-mono text-emerald-700">{fmt(totales.ventasBase)}</td>
-                  <td className="py-2.5 px-4 text-right font-mono text-emerald-700">+{fmt(totales.ventasIVA)}</td>
-                  <td className="py-2.5 px-4 text-right font-mono text-amber-700">{(totales.ventasRecargo||0)>0?"+"+fmt(totales.ventasRecargo):"—"}</td>
-                  <td className="py-2.5 px-4 text-right font-mono text-orange-600">{totales.ventasRetencion>0?"-"+fmt(totales.ventasRetencion):"—"}</td>
-                  <td className="py-2.5 px-4 text-right font-mono font-bold text-emerald-800">{fmt(totales.ventasBase+totales.ventasIVA+(totales.ventasRecargo||0)-totales.ventasRetencion)}</td>
+                  <td className="py-2.5 px-4 text-right font-mono text-emerald-700">{fmt(totales.fiscal303?.ventasBase ?? totales.ventasBase)}</td>
+                  <td className="py-2.5 px-4 text-right font-mono text-emerald-700">+{fmt(totales.fiscal303?.ventasIVA ?? totales.ventasIVA)}</td>
+                  <td className="py-2.5 px-4 text-right font-mono text-amber-700">{((totales.fiscal303?.ventasRecargo ?? totales.ventasRecargo)||0)>0?"+"+fmt(totales.fiscal303?.ventasRecargo ?? totales.ventasRecargo):"—"}</td>
+                  <td className="py-2.5 px-4 text-right font-mono text-orange-600">{(totales.fiscal303?.ventasRetencion ?? totales.ventasRetencion)>0?"-"+fmt(totales.fiscal303?.ventasRetencion ?? totales.ventasRetencion):"—"}</td>
+                  <td className="py-2.5 px-4 text-right font-mono font-bold text-emerald-800">{fmt((totales.fiscal303?.ventasBase ?? totales.ventasBase)+(totales.fiscal303?.ventasIVA ?? totales.ventasIVA)+((totales.fiscal303?.ventasRecargo ?? totales.ventasRecargo)||0)-(totales.fiscal303?.ventasRetencion ?? totales.ventasRetencion))}</td>
                 </tr>
                 <tr className="border-b border-gray-100 bg-rose-50/30">
                   <td className="py-2.5 px-4 font-semibold text-rose-800">IVA Soportado (Gastos)</td>
-                  <td className="py-2.5 px-4 text-right font-mono text-rose-600">{fmt(totales.gastosBase)}</td>
-                  <td className="py-2.5 px-4 text-right font-mono text-rose-600">-{fmt(totales.gastosIVA)}</td>
-                  <td className="py-2.5 px-4 text-right font-mono text-amber-700">{(totales.gastosRecargo||0)>0?"-"+fmt(totales.gastosRecargo):"—"}</td>
+                  <td className="py-2.5 px-4 text-right font-mono text-rose-600">{fmt(totales.fiscal303?.gastosBase ?? totales.gastosBase)}</td>
+                  <td className="py-2.5 px-4 text-right font-mono text-rose-600">-{fmt(totales.fiscal303?.gastosIVA ?? totales.gastosIVA)}</td>
+                  <td className="py-2.5 px-4 text-right font-mono text-amber-700">{((totales.fiscal303?.gastosRecargo ?? totales.gastosRecargo)||0)>0?"-"+fmt(totales.fiscal303?.gastosRecargo ?? totales.gastosRecargo):"—"}</td>
                   <td className="py-2.5 px-4 text-right font-mono text-gray-400">—</td>
-                  <td className="py-2.5 px-4 text-right font-mono font-bold text-rose-700">-{fmt(totales.gastosBase+totales.gastosIVA+(totales.gastosRecargo||0))}</td>
+                  <td className="py-2.5 px-4 text-right font-mono font-bold text-rose-700">-{fmt((totales.fiscal303?.gastosBase ?? totales.gastosBase)+(totales.fiscal303?.gastosIVA ?? totales.gastosIVA)+((totales.fiscal303?.gastosRecargo ?? totales.gastosRecargo)||0))}</td>
                 </tr>
                 <tr className="bg-slate-900 text-white">
                   <td className="py-2.5 px-4 font-black">DIFERENCIA — Mod. 303</td>
-                  <td className="py-2.5 px-4 text-right font-mono">{fmt(totales.ventasBase-totales.gastosBase)}</td>
-                  <td className="py-2.5 px-4 text-right font-mono">{fmt(totales.ventasIVA-totales.gastosIVA)}</td>
-                  <td className="py-2.5 px-4 text-right font-mono">{fmt((totales.ventasRecargo||0)-(totales.gastosRecargo||0))}</td>
+                  <td className="py-2.5 px-4 text-right font-mono">{fmt((totales.fiscal303?.ventasBase ?? totales.ventasBase)-(totales.fiscal303?.gastosBase ?? totales.gastosBase))}</td>
+                  <td className="py-2.5 px-4 text-right font-mono">{fmt((totales.fiscal303?.ventasIVA ?? totales.ventasIVA)-(totales.fiscal303?.gastosIVA ?? totales.gastosIVA))}</td>
+                  <td className="py-2.5 px-4 text-right font-mono">{fmt(((totales.fiscal303?.ventasRecargo ?? totales.ventasRecargo)||0)-((totales.fiscal303?.gastosRecargo ?? totales.gastosRecargo)||0))}</td>
                   <td className="py-2.5 px-4 text-right font-mono">—</td>
-                  <td className={`py-2.5 px-4 text-right font-mono font-black text-lg ${totales.ivaLiquidar>=0?"text-amber-400":"text-emerald-400"}`}>{fmt(totales.ivaLiquidar)}</td>
+                  <td className={`py-2.5 px-4 text-right font-mono font-black text-lg ${(totales.fiscal303?.ivaLiquidar ?? totales.ivaLiquidar)>=0?"text-amber-400":"text-emerald-400"}`}>{fmt(totales.fiscal303?.ivaLiquidar ?? totales.ivaLiquidar)}</td>
                 </tr>
               </tbody>
             </table>
           </div>
+        </div>
+      )}
+
+      {/* TAB: Recargo Equivalencia */}
+      {tab === "recargoEq" && (
+        <div className="space-y-4">
+          {(totales.recargoEq?.nVentas||0) === 0 ? (
+            <div className="text-center py-16 bg-white border border-gray-100 rounded-2xl">
+              <div className="text-4xl mb-2">🏪</div>
+              <div className="text-sm font-semibold text-gray-400">Sin operaciones de tienda en {pLabel}</div>
+              <div className="text-xs text-gray-400 mt-2 max-w-md mx-auto">Aquí se muestra el detalle de la actividad minorista en régimen de recargo de equivalencia (art. 148-163 LIVA).</div>
+            </div>
+          ) : (
+            <>
+              <div className="bg-violet-50 border border-violet-200 rounded-2xl p-5">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="bg-violet-600 text-white text-xs font-black px-2 py-0.5 rounded">REGIMEN ESPECIAL</span>
+                  <span className="text-sm font-bold text-violet-900">Recargo de Equivalencia</span>
+                </div>
+                <p className="text-xs text-violet-800 leading-relaxed">
+                  La tienda minorista opera en régimen de recargo de equivalencia (art. 148-163 LIVA). Las ventas NO se declaran en Mod.303. El IVA y recargo pagados a proveedores se contabilizan como mayor coste de la mercancía y no son deducibles. Los ingresos sí cuentan para IRPF (Mod.130 y declaración anual).
+                </p>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                <div className="bg-white border border-violet-200 rounded-xl p-4">
+                  <div className="text-xs font-bold text-violet-700 uppercase tracking-wide mb-1">Ventas netas</div>
+                  <div className="text-xl font-black font-mono text-emerald-700">+{fmt(totales.recargoEq.ventasBase)}</div>
+                  <div className="text-xs text-gray-500 mt-1">{totales.recargoEq.nVentas} resumen{totales.recargoEq.nVentas!==1?"es":""} mensual{totales.recargoEq.nVentas!==1?"es":""}</div>
+                </div>
+                <div className="bg-white border border-violet-200 rounded-xl p-4">
+                  <div className="text-xs font-bold text-violet-700 uppercase tracking-wide mb-1">Coste mercancía</div>
+                  <div className="text-xl font-black font-mono text-rose-600">-{fmt(totales.recargoEq.costeMercancia)}</div>
+                  <div className="text-xs text-gray-500 mt-1">Registrado manualmente por venta</div>
+                </div>
+                <div className="bg-white border border-violet-200 rounded-xl p-4">
+                  <div className="text-xs font-bold text-violet-700 uppercase tracking-wide mb-1">Compras con recargo</div>
+                  <div className="text-xl font-black font-mono text-amber-700">-{fmt(totales.recargoEq.gastosBase+totales.recargoEq.gastosIVA+totales.recargoEq.gastosRecargo)}</div>
+                  <div className="text-xs text-gray-500 mt-1">Base {fmt(totales.recargoEq.gastosBase)} + IVA {fmt(totales.recargoEq.gastosIVA)} + Rec. {fmt(totales.recargoEq.gastosRecargo)}</div>
+                </div>
+                <div className="bg-white border border-violet-300 rounded-xl p-4 bg-gradient-to-br from-violet-50 to-white">
+                  <div className="text-xs font-bold text-violet-700 uppercase tracking-wide mb-1">Beneficio tienda</div>
+                  <div className={`text-xl font-black font-mono ${totales.recargoEq.beneficioTienda>=0?"text-emerald-700":"text-rose-600"}`}>{totales.recargoEq.beneficioTienda>=0?"+":""}{fmt(totales.recargoEq.beneficioTienda)}</div>
+                  <div className="text-xs text-gray-500 mt-1">Ventas - coste mercancía</div>
+                </div>
+              </div>
+              <div className="bg-white border border-gray-200 rounded-2xl overflow-hidden shadow-sm">
+                <div className="px-5 py-3 border-b border-gray-100 font-black text-sm text-gray-800">Detalle — {pLabel}</div>
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-900">
+                    <tr>{["Concepto","Base","IVA informativo","Coste / Recargo","Resultado"].map((h,i) => (
+                      <th key={i} className={`py-2.5 px-4 text-xs font-semibold text-slate-300 uppercase tracking-wide ${i===0?"text-left":"text-right"}`}>{h}</th>
+                    ))}</tr>
+                  </thead>
+                  <tbody>
+                    <tr className="border-b border-gray-100">
+                      <td className="py-2.5 px-4 font-semibold">Ventas tienda ({totales.recargoEq.nVentas})</td>
+                      <td className="py-2.5 px-4 text-right font-mono text-emerald-700">+{fmt(totales.recargoEq.ventasBase)}</td>
+                      <td className="py-2.5 px-4 text-right font-mono text-violet-700">{fmt(totales.recargoEq.ivaInformativo)}</td>
+                      <td className="py-2.5 px-4 text-right font-mono text-gray-400">—</td>
+                      <td className="py-2.5 px-4 text-right font-mono font-bold text-emerald-700">+{fmt(totales.recargoEq.ventasBase)}</td>
+                    </tr>
+                    <tr className="border-b border-gray-100">
+                      <td className="py-2.5 px-4 font-semibold">Compras mercancía ({totales.recargoEq.nGastos})</td>
+                      <td className="py-2.5 px-4 text-right font-mono text-rose-600">-{fmt(totales.recargoEq.gastosBase)}</td>
+                      <td className="py-2.5 px-4 text-right font-mono text-rose-600">-{fmt(totales.recargoEq.gastosIVA)}</td>
+                      <td className="py-2.5 px-4 text-right font-mono text-rose-600">-{fmt(totales.recargoEq.gastosRecargo)}</td>
+                      <td className="py-2.5 px-4 text-right font-mono font-bold text-rose-700">-{fmt(totales.recargoEq.gastosBase+totales.recargoEq.gastosIVA+totales.recargoEq.gastosRecargo)}</td>
+                    </tr>
+                    <tr className="border-b border-gray-100">
+                      <td className="py-2.5 px-4 font-semibold">Coste mercancía vendida</td>
+                      <td className="py-2.5 px-4 text-right font-mono text-gray-400">—</td>
+                      <td className="py-2.5 px-4 text-right font-mono text-gray-400">—</td>
+                      <td className="py-2.5 px-4 text-right font-mono text-rose-600">-{fmt(totales.recargoEq.costeMercancia)}</td>
+                      <td className="py-2.5 px-4 text-right font-mono font-bold text-rose-700">-{fmt(totales.recargoEq.costeMercancia)}</td>
+                    </tr>
+                    <tr className="bg-violet-700 text-white">
+                      <td className="py-2.5 px-4 font-black">BENEFICIO TIENDA (para Mod.130 / IRPF)</td>
+                      <td className="py-2.5 px-4 text-right font-mono">{fmt(totales.recargoEq.ventasBase)}</td>
+                      <td className="py-2.5 px-4 text-right font-mono">—</td>
+                      <td className="py-2.5 px-4 text-right font-mono">-{fmt(totales.recargoEq.costeMercancia)}</td>
+                      <td className="py-2.5 px-4 text-right font-mono font-black text-lg">{totales.recargoEq.beneficioTienda>=0?"+":""}{fmt(totales.recargoEq.beneficioTienda)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-xs text-amber-900 leading-relaxed">
+                <span className="font-bold">Nota para la gestoría.</span> Este desglose es informativo. El minorista en recargo de equivalencia no presenta Mod.303 por esta actividad. En renta anual, el rendimiento de tienda se integra con el resto de actividades económicas del autónomo.
+              </div>
+            </>
+          )}
         </div>
       )}
 
@@ -5874,20 +6624,14 @@ function VistaModelos({ facturas, nominas, periodYear }) {
   const fmt0 = v => v.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
   // === MOD 303 - IVA ===
+  // Excluye la actividad de tienda (régimen de recargo de equivalencia, art. 148-163 LIVA)
   const calcMod303 = () => {
     const repMap = {};
     const sopMap = {};
-    factsTrim.forEach(f => {
+    const factsTrim303 = factsTrim.filter(f => !esActividadRecargo(f));
+    const excluyeTienda = factsTrim.length !== factsTrim303.length;
+    factsTrim303.forEach(f => {
       const recargoGlobal = f.aplicarRecargo || f.aplicar_recargo || false;
-      const esTienda = (f.tipoDoc || f.tipo_doc) === "venta_tienda";
-      if (esTienda) {
-        const t = calcFacturaReal(f);
-        const key = "tienda";
-        if (!repMap[key]) repMap[key] = { base:0, cuota:0, recargo:0, recargoPct:0, label:"Tienda (imp. manual)", exento:false, conRecargo:false };
-        repMap[key].base += t.totalBase;
-        repMap[key].cuota += t.totalIVA;
-        return;
-      }
       (f.lineas || []).forEach(l => {
         const tipoIVA = parseInt(l.tipoIVA || l.iva || 0);
         const c = calcLinea(l, recargoGlobal);
@@ -5910,7 +6654,6 @@ function VistaModelos({ facturas, nominas, periodYear }) {
     });
     const sortEntries = (map) => Object.entries(map).sort((a,b) => {
       if (a[0]==="exento") return 1; if (b[0]==="exento") return -1;
-      if (a[0]==="tienda") return 1; if (b[0]==="tienda") return 1;
       return parseInt(b[0]) - parseInt(a[0]);
     });
     const totalRepBase    = Object.values(repMap).reduce((s,v)=>s+v.base,0);
@@ -5926,7 +6669,7 @@ function VistaModelos({ facturas, nominas, periodYear }) {
       baseDed:totalSopBase, ivaDeducible:totalSopCuota,
       totalRepBase, totalRepCuota, totalRepRecargo,
       totalSopBase, totalSopCuota, totalSopRecargo,
-      resultado,
+      resultado, excluyeTienda,
     };
   };
 
@@ -6063,6 +6806,11 @@ function VistaModelos({ facturas, nominas, periodYear }) {
               Imprimir
             </button>
           </div>
+          {m303.excluyeTienda && (
+            <div className="px-4 py-2.5 bg-violet-50 border-b border-violet-200 text-xs text-violet-800">
+              <span className="font-bold">Actividad Tienda excluida</span> del Modelo 303. Régimen de recargo de equivalencia (art. 148-163 LIVA): los minoristas no declaran IVA por esta actividad.
+            </div>
+          )}
           <table className="w-full">
             <colgroup>
               <col style={{width:"34%"}}/><col style={{width:"17%"}}/><col style={{width:"17%"}}/><col style={{width:"15%"}}/><col style={{width:"17%"}}/>
