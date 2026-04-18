@@ -195,11 +195,26 @@ function summarizeFacturas(flist) {
   // retencionesRep    = IRPF que retienes a profesionales en gastos → Mod. 111
   // retencionesAlquiler = IRPF que retienes sobre alquiler de inmuebles → Mod. 115
   let ingresos = 0, gastos = 0, ivaRep = 0, ivaSop = 0, retencionesSop = 0, retencionesRep = 0, retencionesAlquiler = 0;
+  // Separación para régimen de recargo de equivalencia (art.148-163 LIVA)
+  let ingresos303 = 0, gastos303 = 0, ivaRep303 = 0, ivaSop303 = 0;
+  let tiendaVentas = 0, tiendaIVAInfo = 0, tiendaCoste = 0;
+  let tiendaCompras = 0, tiendaIVAGas = 0, tiendaRecGas = 0;
+  let nTienda = 0;
   flist.forEach(f => {
     const t = calcFacturaReal(f);
+    const enRecargo = esActividadRecargo(f);
     if (f.tipo === "venta") {
       ingresos += t.totalBase; ivaRep += t.totalIVA;
       retencionesSop += t.totalRetencion; // IRPF soportado (te descuentan en tu factura)
+      if (enRecargo) {
+        tiendaVentas  += t.totalBase;
+        tiendaIVAInfo += t.totalIVA;
+        tiendaCoste   += (t.costeMercancia || 0);
+        nTienda++;
+      } else {
+        ingresos303 += t.totalBase;
+        ivaRep303   += t.totalIVA;
+      }
     } else {
       gastos += t.totalBase; ivaSop += t.totalIVA;
       // Separar retención de alquiler (Mod.115) de retención a profesionales (Mod.111)
@@ -208,12 +223,31 @@ function summarizeFacturas(flist) {
       } else {
         retencionesRep += t.totalRetencion; // IRPF que debes ingresar en nombre del profesional pagado
       }
+      if (enRecargo) {
+        tiendaCompras += t.totalBase;
+        tiendaIVAGas  += t.totalIVA;
+        tiendaRecGas  += (t.totalRecargo || 0);
+      } else {
+        gastos303 += t.totalBase;
+        ivaSop303 += t.totalIVA;
+      }
     }
   });
+  // Beneficio fiscal: ventas - gastos régimen general - coste mercancía vendida tienda
+  const beneficioFiscal = ingresos - gastos303 - tiendaCoste;
   return { ingresos, gastos, ivaRep, ivaSop,
     retenciones: retencionesSop, // alias legacy para Mod. 130
     retencionesSop, retencionesRep, retencionesAlquiler,
-    beneficio: ingresos - gastos };
+    beneficio: ingresos - gastos,
+    // Campos nuevos (régimen especial recargo equivalencia)
+    ingresos303, gastos303, ivaRep303, ivaSop303,
+    ivaLiquidar303: ivaRep303 - ivaSop303,
+    tiendaVentas, tiendaIVAInfo, tiendaCoste,
+    tiendaCompras, tiendaIVAGas, tiendaRecGas,
+    nTienda, beneficioFiscal,
+    // Gastos fiscalmente reconocidos (para KPIs/Mod.130)
+    gastosFiscales: gastos303 + tiendaCoste,
+  };
 }
 function summarizeNominas(nlist) {
   let totalBruto=0, totalNeto=0, totalSSTrab=0, totalSSEmp=0, totalIRPF=0, totalCoste=0;
@@ -2192,11 +2226,12 @@ function ejecutarAuditoria(facturas, nominas = []) {
     return d.getFullYear() === anioActual && Math.floor(d.getMonth()/3) === trimestreActual;
   });
   const resQ = summarizeFacturas(factsTrimestreActual);
-  const ivaAPagar = resQ.ivaRep - resQ.ivaSop;
+  const ivaAPagar = resQ.ivaLiquidar303 ?? (resQ.ivaRep - resQ.ivaSop);
   if (ivaAPagar > 0 && resQ.ingresos > 0) {
-    alertas.push({ tipo: "info", cat: "Previsión fiscal", msg: `IVA estimado trimestre actual: ${fmt(ivaAPagar)} a pagar`, detalle: `Ingresos: ${fmt(resQ.ingresos)}, IVA rep.: ${fmt(resQ.ivaRep)}, IVA sop.: ${fmt(resQ.ivaSop)}.`, accion: "Reserva esta cantidad para el modelo 303." });
+    const detTienda = (resQ.nTienda||0)>0 ? ` (Tienda excluida por recargo de equivalencia)` : "";
+    alertas.push({ tipo: "info", cat: "Previsión fiscal", msg: `IVA estimado trimestre actual: ${fmt(ivaAPagar)} a pagar`, detalle: `Ingresos: ${fmt(resQ.ingresos303 ?? resQ.ingresos)}, IVA rep.: ${fmt(resQ.ivaRep303 ?? resQ.ivaRep)}, IVA sop.: ${fmt(resQ.ivaSop303 ?? resQ.ivaSop)}${detTienda}.`, accion: "Reserva esta cantidad para el modelo 303." });
   }
-  const rendNeto = Math.max(0, resQ.beneficio);
+  const rendNeto = Math.max(0, resQ.beneficioFiscal ?? resQ.beneficio);
   const irpfEst = rendNeto * 0.20 - resQ.retencionesSop;
   if (irpfEst > 0) {
     alertas.push({ tipo: "info", cat: "Previsión fiscal", msg: `IRPF (Mod. 130) estimado: ${fmt(irpfEst)}`, detalle: `Rendimiento neto: ${fmt(rendNeto)}, 20% = ${fmt(rendNeto*0.20)}, retenciones soportadas: -${fmt(resQ.retencionesSop)}.`, accion: "Reserva para el pago fraccionado." });
@@ -2304,8 +2339,8 @@ RESUMEN ANUAL ${anio}:
 TRIMESTRE ACTUAL (${trimestreNombre} ${anio}):
 - Ingresos: ${fmtN(resTrim.ingresos)} EUR
 - Gastos: ${fmtN(resTrim.gastos)} EUR
-- IVA a pagar estimado (Mod. 303): ${fmtN(resTrim.ivaRep - resTrim.ivaSop)} EUR
-- IRPF estimado (Mod. 130): ${fmtN(Math.max(0, resTrim.beneficio * 0.20 - resTrim.retencionesSop))} EUR
+- IVA a pagar estimado (Mod. 303): ${fmtN(resTrim.ivaLiquidar303 ?? (resTrim.ivaRep - resTrim.ivaSop))} EUR${(resTrim.nTienda||0)>0?" (Tienda excluida por recargo de equivalencia)":""}
+- IRPF estimado (Mod. 130): ${fmtN(Math.max(0, (resTrim.beneficioFiscal ?? resTrim.beneficio) * 0.20 - resTrim.retencionesSop))} EUR
 
 EVOLUCIÓN ÚLTIMOS 3 MESES:
 ${meses3.map(m => `${m.mes} ${m.anio}: Ingresos ${fmtN(m.ingresos)}, Gastos ${fmtN(m.gastos)}, Beneficio ${fmtN(m.beneficio)}, Facturas: ${m.nFacturas}`).join("\n")}
@@ -3233,6 +3268,7 @@ function ListaFacturas({ facturas, logo, onEdit, onDelete, onView, tipoFiltro, p
 // ════════════════════════════════════════════════════════════
 function buildResumenContablePrintHTML({ pLabel, qLabel, resF, resN, gastosTotal, ivaAPagar, pagoIRPF_F, irpf111, irpf115, factP, nomiP, porActividad, periodMode, periodValue, periodYear }) {
   const now = new Date().toLocaleDateString("es-ES", { day:"2-digit", month:"long", year:"numeric" });
+  const hayTienda = (resF.nTienda||0) > 0;
   const rowsFacturas = (tipo) => factP.filter(f=>f.tipo===tipo).map(f=>{
     const t = calcFacturaReal(f);
     const nombre = f.clienteNombre || f.cliente_nombre || "-";
@@ -3261,15 +3297,30 @@ function buildResumenContablePrintHTML({ pLabel, qLabel, resF, resN, gastosTotal
     </tr>`;
   }).join("");
 
-  const actRows = porActividad.map(([act, v])=>`<tr>
-    <td>${act||"Sin actividad"}</td>
-    <td style="text-align:right">${fmt(v.ingresos)}</td>
-    <td style="text-align:right">${fmt(v.gastos)}</td>
-    <td style="text-align:right">${fmt(v.ingresos-v.gastos)}</td>
-    <td style="text-align:right">${v.n}</td>
-  </tr>`).join("");
+  const actRows = porActividad.map(([act, v])=>{
+    const enRecargo = (act||"").toLowerCase() === "tienda";
+    if (enRecargo) {
+      const benefTienda = (resF.tiendaVentas||0) - (resF.tiendaCoste||0);
+      return `<tr style="background:#faf5ff">
+        <td style="color:#7e22ce;font-weight:700">${act||"Sin actividad"} <small>(recargo eq.)</small></td>
+        <td style="text-align:right">${fmt(v.ingresos)}</td>
+        <td style="text-align:right">${fmt(resF.tiendaCoste||0)} <small>(coste merc.)</small></td>
+        <td style="text-align:right;font-weight:800">${fmt(benefTienda)}</td>
+        <td style="text-align:right">${v.n}</td>
+      </tr>`;
+    }
+    return `<tr>
+      <td>${act||"Sin actividad"}</td>
+      <td style="text-align:right">${fmt(v.ingresos)}</td>
+      <td style="text-align:right">${fmt(v.gastos)}</td>
+      <td style="text-align:right">${fmt(v.ingresos-v.gastos)}</td>
+      <td style="text-align:right">${v.n}</td>
+    </tr>`;
+  }).join("");
 
-  const resultado = resF.ingresos - gastosTotal;
+  // Resultado fiscal: usa beneficioFiscal (ya con tienda = ventas - coste mercancía) y resta nóminas
+  const resultado = (resF.beneficioFiscal ?? (resF.ingresos - resF.gastos)) - resN.totalCoste;
+  const gastosFiscalesKpi = (resF.gastosFiscales ?? resF.gastos) + resN.totalCoste;
   const css = `
     body{font-family:'Segoe UI',Arial,sans-serif;font-size:11px;color:#1e293b;margin:0;padding:0}
     h1{font-size:18px;font-weight:800;margin:0 0 2px}
@@ -3305,16 +3356,19 @@ function buildResumenContablePrintHTML({ pLabel, qLabel, resF, resN, gastosTotal
     <div style="text-align:right;font-size:10px;color:#64748b">Generado el ${now}</div>
   </div>
 
+  ${hayTienda ? `<div style="background:#faf5ff;border:1px solid #e9d5ff;border-radius:5px;padding:7px 11px;font-size:9px;color:#7e22ce;margin-bottom:10px">
+    Actividad <b>Tienda</b> en régimen de recargo de equivalencia (art.148-163 LIVA): excluida del Mod.303. El beneficio fiscal se calcula como ventas ${fmt(resF.tiendaVentas||0)} € - coste mercancía vendida ${fmt(resF.tiendaCoste||0)} €.
+  </div>` : ""}
   <div class="kpi-grid">
     <div class="kpi green"><div class="kpi-val">${fmt(resF.ingresos)}</div><div class="kpi-lbl">Ingresos (base)</div></div>
-    <div class="kpi red"><div class="kpi-val">${fmt(resF.gastos)}</div><div class="kpi-lbl">Gastos facturación</div></div>
+    <div class="kpi red"><div class="kpi-val">${fmt(gastosFiscalesKpi)}</div><div class="kpi-lbl">Gastos deducibles</div></div>
     <div class="kpi blue"><div class="kpi-val">${fmt(resN.totalCoste)}</div><div class="kpi-lbl">Coste nóminas</div></div>
-    <div class="kpi ${resultado>=0?"green":"red"}"><div class="kpi-val">${fmt(resultado)}</div><div class="kpi-lbl">Resultado real</div></div>
+    <div class="kpi ${resultado>=0?"green":"red"}"><div class="kpi-val">${fmt(resultado)}</div><div class="kpi-lbl">Resultado fiscal</div></div>
   </div>
 
   <h2>Obligaciones fiscales estimadas - ${qLabel}</h2>
   <div class="fis-box">
-    <div class="fis"><div class="fis-title">Mod. 303 - IVA a ingresar</div><div class="fis-val">${fmt(ivaAPagar)}</div><div class="fis-sub">IVA rep. ${fmt(resF.ivaRep)} - IVA sop. ${fmt(resF.ivaSop)}</div></div>
+    <div class="fis"><div class="fis-title">Mod. 303 - IVA a ingresar${hayTienda?" (sin tienda)":""}</div><div class="fis-val">${fmt(ivaAPagar)}</div><div class="fis-sub">IVA rep. ${fmt(resF.ivaRep303 ?? resF.ivaRep)} - IVA sop. ${fmt(resF.ivaSop303 ?? resF.ivaSop)}</div></div>
     <div class="fis"><div class="fis-title">Mod. 130 - IRPF estimación directa</div><div class="fis-val">${fmt(pagoIRPF_F)}</div><div class="fis-sub">20% sobre rendimiento neto</div></div>
     <div class="fis"><div class="fis-title">Mod. 111 - IRPF retenciones</div><div class="fis-val">${fmt(irpf111)}</div><div class="fis-sub">Nóminas + profesionales externos</div></div>
     ${irpf115 > 0 ? `<div class="fis"><div class="fis-title">Mod. 115 - Retención alquiler</div><div class="fis-val">${fmt(irpf115)}</div><div class="fis-sub">Arrendamiento inmueble · 19%</div></div>` : ""}
@@ -3386,12 +3440,12 @@ function Dashboard({ facturas, nominas, trabajadores, periodMode, periodValue, p
   const nomiQ  = useMemo(() => nominas.filter(n=>{const d=new Date(n.fecha);return Math.floor(d.getMonth()/3)===qIdx&&d.getFullYear()===periodYear;}), [nominas,qIdx,periodYear]);
   const qF     = useMemo(() => summarizeFacturas(factsQ), [factsQ]);
   const qN     = useMemo(() => summarizeNominas(nomiQ), [nomiQ]);
-  const ivaAPagar   = qF.ivaRep - qF.ivaSop;
+  // Mod.303: EXCLUYE tienda (recargo equivalencia). ivaLiquidar303 = ivaRep303 - ivaSop303.
+  const ivaAPagar   = qF.ivaLiquidar303;
   // Mod. 130: estimación directa simplificada (art. 110 RIRPF)
-  // Rendimiento neto = Ingresos - Gastos deducibles - Costes laborales
-  // Base: 20% sobre rendimiento neto acumulado en el trimestre
-  // Minoración: retenciones soportadas en ventas (IRPF que clientes retienen)
-  const rendNeto    = Math.max(0, qF.beneficio - qN.totalCoste);
+  // Rendimiento neto = Ingresos totales - Gastos régimen general - Coste mercancía tienda - Costes laborales
+  // El beneficio de tienda (régimen recargo) se integra por coste de mercancía vendida.
+  const rendNeto    = Math.max(0, qF.beneficioFiscal - qN.totalCoste);
   const pagoIRPF_F  = Math.max(0, rendNeto * 0.20 - qF.retencionesSop);
   // Mod. 111: IRPF retenciones practicadas (nóminas + profesionales externos)
   const irpf111     = qN.totalIRPF + qF.retencionesRep;
@@ -3447,10 +3501,15 @@ function Dashboard({ facturas, nominas, trabajadores, periodMode, periodValue, p
         <Divider label={`Resumen consolidado - ${pLabel}`}/>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <KPI label="Ingresos (base)" value={fmt(resF.ingresos)} sub={`${factP.filter(f=>f.tipo==="venta").length} ventas`} tint="green"/>
-          <KPI label="Gastos facturación" value={fmt(resF.gastos)} sub={`${factP.filter(f=>f.tipo==="gasto").length} gastos`} tint="red"/>
+          <KPI label="Gastos deducibles" value={fmt((resF.gastosFiscales ?? resF.gastos) + resN.totalCoste)} sub={(resF.nTienda||0)>0 ? `incluye coste mercancía tienda` : `${factP.filter(f=>f.tipo==="gasto").length} gastos`} tint="red"/>
           <KPI label="Coste nóminas" value={fmt(resN.totalCoste)} sub={`${nomiP.length} nóminas`} tint="violet"/>
-          <KPI label="Resultado real" value={fmt(resF.ingresos - gastosTotal)} sub="Ingresos - gastos - nóminas" accent/>
+          <KPI label="Resultado fiscal" value={fmt((resF.beneficioFiscal ?? (resF.ingresos - resF.gastos)) - resN.totalCoste)} sub="Rendimiento neto IRPF" accent/>
         </div>
+        {(resF.nTienda||0)>0 && (
+          <div className="mt-2 text-xs text-violet-800 bg-violet-50 border border-violet-200 rounded-lg px-3 py-2">
+            <span className="font-bold">Tienda (recargo equivalencia).</span> Beneficio fiscal = ventas {fmt(resF.tiendaVentas||0)} - coste mercancía vendida {fmt(resF.tiendaCoste||0)} = {fmt((resF.tiendaVentas||0)-(resF.tiendaCoste||0))}. No declara IVA en Mod.303.
+          </div>
+        )}
       </div>
 
       {/* Saldos pendientes - resumen en dashboard */}
@@ -3581,7 +3640,8 @@ function Dashboard({ facturas, nominas, trabajadores, periodMode, periodValue, p
             <p className="text-xs text-indigo-700 mb-3">Estimación directa simplificada · art. 110 RIRPF</p>
             <div className="space-y-1.5 text-sm">
               <div className="flex justify-between"><span className="text-gray-600">Ingresos netos</span><span className="font-semibold font-mono">{fmt(qF.ingresos)}</span></div>
-              <div className="flex justify-between"><span className="text-gray-600">Gastos deducibles</span><span className="font-semibold font-mono text-rose-600">-{fmt(qF.gastos + qN.totalCoste)}</span></div>
+              <div className="flex justify-between"><span className="text-gray-600">Gastos deducibles</span><span className="font-semibold font-mono text-rose-600">-{fmt((qF.gastosFiscales ?? qF.gastos) + qN.totalCoste)}</span></div>
+              {(qF.nTienda||0)>0 && <div className="text-xs text-violet-700">Incluye coste mercancía tienda: {fmt(qF.tiendaCoste||0)}</div>}
               <div className="flex justify-between"><span className="text-gray-600">Rendimiento neto</span><span className="font-semibold font-mono">{fmt(rendNeto)}</span></div>
               <div className="flex justify-between"><span className="text-gray-600">20% s/ rendimiento</span><span className="font-semibold font-mono">{fmt(rendNeto * 0.20)}</span></div>
               {qF.retencionesSop > 0 && <div className="flex justify-between"><span className="text-gray-600">Retenciones soportadas</span><span className="font-semibold font-mono text-rose-600">-{fmt(qF.retencionesSop)}</span></div>}
@@ -4336,7 +4396,23 @@ tbody tr:nth-child(even) { background:#f8fafc; }
 
   const filasAct = actividades.map(d => {
     const esAlquiler = d.actividad.toLowerCase() === "alquiler";
-    const resultado  = d.ventasBase - d.gastosBase - d.nominasCoste;
+    const enRecargo  = esActividadEnRecargo(d.actividad);
+    if (enRecargo) {
+      // Actividad en recargo de equivalencia: sin IVA declarable en 303, beneficio = ventas - coste mercancía vendida
+      return `<tr style="background:#faf5ff">
+        <td style="font-weight:700;border-left:3px solid #7e22ce"><span class="badge-alq" style="background:#7e22ce">REC.EQ.</span> ${d.actividad}</td>
+        <td class="n g">${fmtN(d.ventasBase)} €</td>
+        <td class="n" style="color:#7e22ce;font-size:7px">${fmtN(d.ventasIVA)} € <span style="font-size:6px">(informativo)</span></td>
+        <td class="n">—</td>
+        <td class="n" style="font-weight:800">${fmtN(d.ventasBase)} €</td>
+        <td class="n r">${fmtN(d.tiendaCoste||0)} €</td>
+        <td class="n" style="color:#7e22ce;font-size:7px">No deducible</td>
+        <td class="n">—</td>
+        <td class="n r" style="font-weight:800">${fmtN(d.tiendaCoste||0)} €</td>
+        <td class="n" style="font-weight:900;color:${d.beneficioBruto>=0?"#15803d":"#dc2626"}">${d.beneficioBruto>=0?"+":""}${fmtN(d.beneficioBruto)} €</td>
+      </tr>`;
+    }
+    const resultado  = d.beneficioBruto;
     const trClass    = esAlquiler ? "style=\"background:#ecfeff\"" : "";
     const actLabel   = esAlquiler
       ? `<span class="badge-alq">MOD.115</span> ${d.actividad}`
@@ -4356,18 +4432,19 @@ tbody tr:nth-child(even) { background:#f8fafc; }
     </tr>`;
   }).join("");
 
-  // Totales actividades
-  const totResultado = totales.ventasBase - totales.gastosBase - totales.nominasCoste;
+  // Totales actividades — usar beneficioBruto consolidado (ya corregido con tienda = ventas - coste mercancía)
+  const totResultado = totales.beneficioBruto;
+  const gastosTotalFiscal = totales.gastosFiscales ?? (totales.gastosBase + totales.nominasCoste);
   const filaTotales = `<tr class="total-row">
     <td>TOTALES</td>
     <td class="n">${fmtN(totales.ventasBase)} €</td>
     <td class="n">${fmtN(totales.ventasIVA+(totales.ventasRecargo||0))} €</td>
     <td class="n">${fmtN(totales.ventasRetencion)} €</td>
     <td class="n">${fmtN(totales.ventasBase+totales.ventasIVA+(totales.ventasRecargo||0)-totales.ventasRetencion)} €</td>
-    <td class="n">${fmtN(totales.gastosBase)} €</td>
-    <td class="n">${fmtN(totales.gastosIVA)} €</td>
+    <td class="n">${fmtN(gastosTotalFiscal)} €</td>
+    <td class="n">${fmtN(totales.fiscal303?.gastosIVA ?? totales.gastosIVA)} €</td>
     <td class="n">${fmtN(totales.gastosRetencion||0)} €</td>
-    <td class="n">${fmtN(totales.gastosBase+totales.gastosIVA-(totales.gastosRetencion||0))} €</td>
+    <td class="n">${fmtN(gastosTotalFiscal+(totales.fiscal303?.gastosIVA ?? totales.gastosIVA)-(totales.gastosRetencion||0))} €</td>
     <td class="n" style="color:${totResultado>=0?"#34d399":"#fca5a5"};font-size:11px">${totResultado>=0?"+":""}${fmtN(totResultado)} €</td>
   </tr>`;
 
@@ -4425,12 +4502,13 @@ ${ventasRows}${gastosRows}`;
   <span class="badge">Gestoría AEAT</span>
 </div>
 <div class="aviso">Documento orientativo para facilitar la declaración fiscal. El asesor es responsable de la presentación oficial ante la AEAT.</div>
+${(totales.recargoEq?.nVentas||0)>0 ? `<div class="aviso" style="background:#faf5ff;border-color:#e9d5ff;color:#7e22ce">Actividad <b>Tienda</b> en régimen de recargo de equivalencia (art.148-163 LIVA): IVA no declarable en Mod.303. El beneficio fiscal de tienda se calcula como ventas - coste mercancía vendida.</div>` : ""}
 <div class="kpis">
   <div class="kpi"><div class="kpi-l">Base imponible ingresos</div><div class="kpi-v g">+${fmtN(totales.ventasBase)} €</div></div>
-  <div class="kpi"><div class="kpi-l">IVA repercutido</div><div class="kpi-v b">+${fmtN(totales.ventasIVA+(totales.ventasRecargo||0))} €</div></div>
-  <div class="kpi"><div class="kpi-l">Gastos deducibles</div><div class="kpi-v r">-${fmtN(totales.gastosBase+totales.nominasCoste)} €</div></div>
+  <div class="kpi"><div class="kpi-l">IVA repercutido (Mod.303)</div><div class="kpi-v b">+${fmtN((totales.fiscal303?.ventasIVA ?? totales.ventasIVA)+((totales.fiscal303?.ventasRecargo ?? totales.ventasRecargo)||0))} €</div></div>
+  <div class="kpi"><div class="kpi-l">Gastos deducibles</div><div class="kpi-v r">-${fmtN(totales.gastosFiscales ?? (totales.gastosBase+totales.nominasCoste))} €</div></div>
   <div class="kpi"><div class="kpi-l">Rendimiento neto</div><div class="kpi-v ${totResultado>=0?"g":"r"}">${totResultado>=0?"+":""}${fmtN(totResultado)} €</div></div>
-  <div class="kpi"><div class="kpi-l">IVA neto (Mod. 303)</div><div class="kpi-v ${totales.ivaLiquidar>=0?"r":"g"}">${fmtN(totales.ivaLiquidar)} €</div></div>
+  <div class="kpi"><div class="kpi-l">IVA neto (Mod. 303)</div><div class="kpi-v ${(totales.fiscal303?.ivaLiquidar ?? totales.ivaLiquidar)>=0?"r":"g"}">${fmtN(totales.fiscal303?.ivaLiquidar ?? totales.ivaLiquidar)} €</div></div>
   <div class="kpi"><div class="kpi-l">Ret. arrendamiento (Mod.115)</div><div class="kpi-v t">${fmtN(irpf115)} €</div></div>
 </div>
 <div class="st">Desglose por actividad económica — ${pLabel}</div>
@@ -4626,7 +4704,23 @@ function buildResumenActividadesSinFiscalHTML(data, factsFil, pLabel, empresa, n
 
   const filasAct = actividades.map(d => {
     const esAlquiler = d.actividad.toLowerCase() === "alquiler";
-    const resultado  = d.ventasBase - d.gastosBase - d.nominasCoste;
+    const enRecargo  = esActividadEnRecargo(d.actividad);
+    if (enRecargo) {
+      return `<tr style="background:#faf5ff">
+        <td style="font-weight:700;border-left:3px solid #7e22ce">${d.actividad} <small style="color:#7e22ce">(recargo eq.)</small></td>
+        <td style="text-align:center">${d.nVentas+d.nGastos}</td>
+        <td style="text-align:right;color:#15803d;font-family:monospace;font-weight:700">${fmtN(d.ventasBase)} €</td>
+        <td style="text-align:right;color:#7e22ce;font-family:monospace;font-size:7.5px">${fmtN(d.ventasIVA)} € (info)</td>
+        <td style="text-align:right">—</td>
+        <td style="text-align:right;font-family:monospace;font-weight:800">${fmtN(d.ventasBase)} €</td>
+        <td style="text-align:right;color:#dc2626;font-family:monospace">${fmtN(d.tiendaCoste||0)} €</td>
+        <td style="text-align:right;color:#7e22ce;font-family:monospace;font-size:7px">No deducible</td>
+        <td style="text-align:right">—</td>
+        <td style="text-align:right;color:#dc2626;font-family:monospace;font-weight:800">${fmtN(d.tiendaCoste||0)} €</td>
+        <td style="text-align:right;font-family:monospace;font-weight:900;color:${d.beneficioBruto>=0?"#15803d":"#dc2626"}">${d.beneficioBruto>=0?"+":""}${fmtN(d.beneficioBruto)} €</td>
+      </tr>`;
+    }
+    const resultado  = d.beneficioBruto;
     const retGasLabel = esAlquiler ? "Mod.115 19%" : (d.gastosRetencion>0 ? "Mod.111" : "—");
     return `<tr style="${esAlquiler?"background:#ecfeff":""}">
       <td style="font-weight:700;border-left:3px solid ${esAlquiler?"#0e7490":"#3b82f6"}">${d.actividad}${esAlquiler?" <small style='color:#0e7490'>(arrendamiento)</small>":""}</td>
@@ -4643,7 +4737,7 @@ function buildResumenActividadesSinFiscalHTML(data, factsFil, pLabel, empresa, n
     </tr>`;
   }).join("");
 
-  const totResultado = totales.ventasBase - totales.gastosBase - totales.nominasCoste;
+  const totResultado = totales.beneficioBruto;
 
   // Listado facturas por actividad
   const porAct = {};
@@ -4718,12 +4812,13 @@ tbody tr:hover { background:#f8fafc; }
   <span class="badge">Para gestoría</span>
 </div>
 <div class="aviso">Documento de ingresos y gastos por actividad para entrega a gestoría. No incluye estimaciones de modelos AEAT — esas las calcula el asesor fiscal.</div>
+${(totales.recargoEq?.nVentas||0)>0 ? `<div class="aviso" style="background:#faf5ff;border-color:#e9d5ff;color:#7e22ce">La actividad <b>Tienda</b> opera en recargo de equivalencia (art.148-163 LIVA): no declara IVA en Mod.303 y el beneficio se calcula como ventas menos coste de mercancía vendida.</div>` : ""}
 <div class="kpis">
   <div class="kpi"><div class="kpi-l">Ingresos (base imponible)</div><div class="kpi-v g">+${fmtN(totales.ventasBase)} €</div></div>
-  <div class="kpi"><div class="kpi-l">IVA repercutido total</div><div class="kpi-v b">+${fmtN(totales.ventasIVA+(totales.ventasRecargo||0))} €</div></div>
-  <div class="kpi"><div class="kpi-l">Gastos deducibles (base)</div><div class="kpi-v r">-${fmtN(totales.gastosBase+totales.nominasCoste)} €</div></div>
-  <div class="kpi"><div class="kpi-l">IVA soportado total</div><div class="kpi-v" style="color:#0369a1">-${fmtN(totales.gastosIVA)} €</div></div>
-  <div class="kpi"><div class="kpi-l">Rendimiento neto estimado</div><div class="kpi-v ${totResultado>=0?"g":"r"}">${totResultado>=0?"+":""}${fmtN(totResultado)} €</div></div>
+  <div class="kpi"><div class="kpi-l">IVA repercutido (Mod.303)</div><div class="kpi-v b">+${fmtN((totales.fiscal303?.ventasIVA ?? totales.ventasIVA)+((totales.fiscal303?.ventasRecargo ?? totales.ventasRecargo)||0))} €</div></div>
+  <div class="kpi"><div class="kpi-l">Gastos deducibles</div><div class="kpi-v r">-${fmtN(totales.gastosFiscales ?? (totales.gastosBase+totales.nominasCoste))} €</div></div>
+  <div class="kpi"><div class="kpi-l">IVA soportado (Mod.303)</div><div class="kpi-v" style="color:#0369a1">-${fmtN(totales.fiscal303?.gastosIVA ?? totales.gastosIVA)} €</div></div>
+  <div class="kpi"><div class="kpi-l">Rendimiento neto</div><div class="kpi-v ${totResultado>=0?"g":"r"}">${totResultado>=0?"+":""}${fmtN(totResultado)} €</div></div>
 </div>
 <div class="st">Resumen por actividad — ${pLabel}</div>
 <table>
@@ -4733,13 +4828,13 @@ tbody tr:hover { background:#f8fafc; }
     <tr class="tot">
       <td>TOTALES</td><td style="text-align:center">${totales.nVentas+totales.nGastos}</td>
       <td style="text-align:right">${fmtN(totales.ventasBase)} €</td>
-      <td style="text-align:right">${fmtN(totales.ventasIVA+(totales.ventasRecargo||0))} €</td>
+      <td style="text-align:right">${fmtN((totales.fiscal303?.ventasIVA ?? totales.ventasIVA)+((totales.fiscal303?.ventasRecargo ?? totales.ventasRecargo)||0))} €</td>
       <td style="text-align:right">${fmtN(totales.ventasRetencion)} €</td>
-      <td style="text-align:right">${fmtN(totales.ventasBase+totales.ventasIVA+(totales.ventasRecargo||0)-totales.ventasRetencion)} €</td>
-      <td style="text-align:right">${fmtN(totales.gastosBase)} €</td>
-      <td style="text-align:right">${fmtN(totales.gastosIVA)} €</td>
+      <td style="text-align:right">${fmtN(totales.ventasBase+(totales.fiscal303?.ventasIVA ?? totales.ventasIVA)+((totales.fiscal303?.ventasRecargo ?? totales.ventasRecargo)||0)-totales.ventasRetencion)} €</td>
+      <td style="text-align:right">${fmtN(totales.gastosFiscales ?? (totales.gastosBase+totales.nominasCoste))} €</td>
+      <td style="text-align:right">${fmtN(totales.fiscal303?.gastosIVA ?? totales.gastosIVA)} €</td>
       <td style="text-align:right">${fmtN(totales.gastosRetencion||0)} €</td>
-      <td style="text-align:right">${fmtN(totales.gastosBase+totales.gastosIVA-(totales.gastosRetencion||0))} €</td>
+      <td style="text-align:right">${fmtN((totales.gastosFiscales ?? (totales.gastosBase+totales.nominasCoste))+(totales.fiscal303?.gastosIVA ?? totales.gastosIVA)-(totales.gastosRetencion||0))} €</td>
       <td style="text-align:right;font-size:11px;color:${totResultado>=0?"#34d399":"#fca5a5"}">${totResultado>=0?"+":""}${fmtN(totResultado)} €</td>
     </tr>
   </tbody>
