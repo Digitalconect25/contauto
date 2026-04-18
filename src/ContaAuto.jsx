@@ -121,6 +121,10 @@ function esActividadRecargo(f) {
   const actividad = (f.actividad || "").trim().toLowerCase();
   return tipoDoc === "venta_tienda" || actividad === "tienda";
 }
+// Versión que trabaja directamente con el nombre de la actividad (útil en vistas/resúmenes ya agrupados)
+function esActividadEnRecargo(actNombre) {
+  return (actNombre || "").trim().toLowerCase() === "tienda";
+}
 
 // Agrupa líneas por tipo de IVA para el resumen fiscal.
 // Distingue mismo porcentaje con y sin recargo de equivalencia,
@@ -4031,12 +4035,21 @@ function calcInformeActividades(facturas, nominas, mode, value, year) {
       dLab.gastosBase += c.baseTotal; dLab.gastosTotal += c.costeEmpresa; dLab.nGastos++;
     });
   }
-  const actividades = Object.values(mapa).map(d => ({
-    ...d,
-    beneficioBruto:  d.ventasBase - d.gastosBase - d.nominasCoste,
-    ivaLiquidar:     d.ventasIVA + (d.ventasRecargo||0) - d.gastosIVA - (d.gastosRecargo||0),
-    irpfFraccionado: Math.max(0, (d.ventasBase - d.gastosBase - d.nominasCoste) * 0.20 - d.ventasRetencion),
-  }));
+  const actividades = Object.values(mapa).map(d => {
+    const enRecargo = esActividadEnRecargo(d.actividad);
+    // En recargo de equivalencia el beneficio fiscal = ventas - coste mercancía vendida (NO compras del período).
+    // Las compras del período incluyen IVA+recargo no deducibles y parte puede quedar como stock.
+    // Mod.303 no aplica a la tienda. Mod.130 integra el beneficio en el rendimiento del autónomo.
+    const beneficio = enRecargo
+      ? d.tiendaBeneficio
+      : d.ventasBase - d.gastosBase - d.nominasCoste;
+    return {
+      ...d,
+      beneficioBruto:  beneficio,
+      ivaLiquidar:     enRecargo ? 0 : d.ventasIVA + (d.ventasRecargo||0) - d.gastosIVA - (d.gastosRecargo||0),
+      irpfFraccionado: Math.max(0, beneficio * 0.20 - (d.ventasRetencion||0)),
+    };
+  });
   const zero = { ventasBase:0,ventasIVA:0,ventasRecargo:0,ventasRetencion:0,ventasTotal:0,
     gastosBase:0,gastosIVA:0,gastosRecargo:0,gastosRetencion:0,gastosTotal:0,
     nominasBruto:0,nominasSSTrab:0,nominasIRPF:0,nominasNeto:0,nominasSSEmp:0,nominasCoste:0,
@@ -4078,6 +4091,10 @@ function calcInformeActividades(facturas, nominas, mode, value, year) {
   fiscal303.ivaLiquidar = fiscal303.ventasIVA + fiscal303.ventasRecargo - fiscal303.gastosIVA - fiscal303.gastosRecargo;
   tot.fiscal303 = fiscal303;
   tot.recargoEq = recargoEq;
+  // Gastos deducibles FISCALES (para IRPF y KPIs): las compras de tienda se reemplazan
+  // por el coste de mercancía vendida, que es lo realmente reconocido como gasto del período.
+  tot.gastosFiscales = (tot.gastosBase - recargoEq.gastosBase) + recargoEq.costeMercancia + tot.nominasCoste;
+  // Coherencia: ventasBase - gastosFiscales = beneficioBruto consolidado
   return { actividades: actividades.sort((a,b) => b.ventasBase - a.ventasBase), totales: tot };
 }
 
@@ -4085,7 +4102,32 @@ function buildInformeGestoriaHTML(data, pLabel, empresaNombre, empresaNif, irpf1
   const now = new Date().toLocaleDateString("es-ES", { day:"2-digit", month:"long", year:"numeric" });
   const { actividades, totales } = data;
   const fmtN = v => (v||0).toLocaleString("es-ES", { minimumFractionDigits:2, maximumFractionDigits:2 });
-  const filaAct = (d) => `
+  const filaActRecargo = (d) => `
+  <tr>
+    <td rowspan="4" style="background:#faf5ff;font-weight:700;font-size:12px;color:#0f172a;vertical-align:top;padding:10px 12px;border-left:4px solid #7e22ce">${d.actividad}<div style="font-size:8px;color:#7e22ce;font-weight:500;margin-top:2px;text-transform:uppercase;letter-spacing:.05em">Recargo equivalencia</div></td>
+    <td class="lbl">Ventas (base)</td>
+    <td class="num green">+${fmtN(d.ventasBase)} €</td>
+    <td class="num">${d.nVentas} resumen${d.nVentas!==1?"es":""}</td>
+  </tr>
+  <tr>
+    <td class="lbl">IVA informativo (no Mod.303)</td>
+    <td class="num" style="color:#7e22ce">${fmtN(d.ventasIVA)} €</td>
+    <td class="num" style="font-size:9px;color:#7e22ce">Art. 148-163 LIVA</td>
+  </tr>
+  <tr>
+    <td class="lbl">Coste mercancía vendida</td>
+    <td class="num red">-${fmtN(d.tiendaCoste||0)} €</td>
+    <td class="num" style="font-size:9px;color:#64748b">${d.nGastos} compras: ${fmtN((d.gastosBase||0)+(d.gastosIVA||0)+(d.gastosRecargo||0))} €</td>
+  </tr>
+  <tr style="background:#faf5ff">
+    <td class="lbl" style="font-weight:700">BENEFICIO TIENDA</td>
+    <td class="num" style="font-weight:900;font-size:14px;color:${d.beneficioBruto>=0?"#15803d":"#dc2626"}">${d.beneficioBruto>=0?"+":""}${fmtN(d.beneficioBruto)} €</td>
+    <td class="num" style="font-size:10px;color:#64748b">IRPF frac.: ${fmtN(d.irpfFraccionado)} €<br><span style="color:#7e22ce">Ver apéndice</span></td>
+  </tr>
+  <tr><td colspan="3" style="height:6px;background:transparent;border:none"></td></tr>`;
+  const filaAct = (d) => {
+    if (esActividadEnRecargo(d.actividad)) return filaActRecargo(d);
+    return `
   <tr>
     <td rowspan="4" style="background:#f8fafc;font-weight:700;font-size:12px;color:#0f172a;vertical-align:top;padding:10px 12px;border-left:4px solid #3b82f6">${d.actividad}</td>
     <td class="lbl">Ingresos (base imponible)</td>
@@ -4107,9 +4149,8 @@ function buildInformeGestoriaHTML(data, pLabel, empresaNombre, empresaNif, irpf1
     <td class="num" style="font-weight:900;font-size:14px;color:${d.beneficioBruto>=0?"#15803d":"#dc2626"}">${d.beneficioBruto>=0?"+":""}${fmtN(d.beneficioBruto)} €</td>
     <td class="num" style="font-size:10px;color:#64748b">IVA neto: ${fmtN(d.ivaLiquidar)} €<br>IRPF frac.: ${fmtN(d.irpfFraccionado)} €</td>
   </tr>
-  ${d.nTienda>0?`<tr style="background:#faf5ff"><td class="lbl" colspan="2" style="color:#7e22ce;font-size:10px">
-    Tienda — Subtotal: ${fmtN(d.tiendaSubtotal)} € · IVA: ${fmtN(d.tiendaImpuesto)} € · Coste mercancía: ${fmtN(d.tiendaCoste)} € · Beneficio: ${fmtN(d.tiendaBeneficio)} €</td><td></td></tr>`:""}
   <tr><td colspan="3" style="height:6px;background:transparent;border:none"></td></tr>`;
+  };
   const css = `@page{size:A4;margin:0}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}html{-webkit-print-color-adjust:exact}}
 body{font-family:'Helvetica Neue',Arial,sans-serif;font-size:11px;color:#0f172a;margin:14mm 16mm;line-height:1.5;-webkit-print-color-adjust:exact;print-color-adjust:exact}
 .hdr{background:#0f172a;color:#fff;padding:16px 20px;border-radius:8px;margin-bottom:18px;display:flex;justify-content:space-between;align-items:center}
@@ -4141,9 +4182,9 @@ thead th:not(:first-child){text-align:right}tbody td{padding:5px 9px;border-bott
 <div class="aviso">Documento orientativo para facilitar la declaración. El asesor fiscal es responsable de la presentación oficial.</div>
 <div class="kpis">
   <div class="kpi"><div class="kpi-lbl">Ingresos (base)</div><div class="kpi-val g">+${fmtN(totales.ventasBase)} €</div></div>
-  <div class="kpi"><div class="kpi-lbl">Gastos deducibles</div><div class="kpi-val r">-${fmtN(totales.gastosBase+totales.nominasCoste)} €</div></div>
+  <div class="kpi"><div class="kpi-lbl">Gastos deducibles</div><div class="kpi-val r">-${fmtN(totales.gastosFiscales ?? (totales.gastosBase+totales.nominasCoste))} €</div></div>
   <div class="kpi"><div class="kpi-lbl">Resultado neto</div><div class="kpi-val ${totales.beneficioBruto>=0?"g":"r"}">${totales.beneficioBruto>=0?"+":""}${fmtN(totales.beneficioBruto)} €</div></div>
-  <div class="kpi"><div class="kpi-lbl">IVA neto (Mod.303)</div><div class="kpi-val b">${fmtN(totales.ivaLiquidar)} €</div></div>
+  <div class="kpi"><div class="kpi-lbl">IVA neto (Mod.303)</div><div class="kpi-val b">${fmtN(totales.fiscal303?.ivaLiquidar ?? totales.ivaLiquidar)} €</div></div>
 </div>
 ${sinFiscal ? "" : `<div class="st">Estimación modelos AEAT — ${pLabel}</div>
 <div class="fiscal">
@@ -4153,7 +4194,7 @@ ${sinFiscal ? "" : `<div class="st">Estimación modelos AEAT — ${pLabel}</div>
   </div>
   <div class="fbox"><div class="fmod">Mod. 130 — IRPF fraccionado</div>
     <div class="fval" style="color:#b45309">${fmtN(totales.irpfFraccionado)} €</div>
-    <div class="fdet">20% × ${fmtN(Math.max(0,totales.beneficioBruto))} € - Retenciones ${fmtN(totales.ventasRetencion)} €</div>
+    <div class="fdet">Suma IRPF por actividad (art.110.3 RIRPF)<br>Rendimiento neto: ${fmtN(totales.beneficioBruto)} € · Retenciones soportadas: ${fmtN(totales.ventasRetencion)} €</div>
   </div>
   <div class="fbox"><div class="fmod">Mod. 111 — Retenciones</div>
     <div class="fval" style="color:#7e22ce">${fmtN(irpf111Nom)} €</div>
@@ -4507,7 +4548,8 @@ ${boxMod("MOD. 303","IVA — Impuesto sobre el Valor Añadido"+(hayTienda?" (exc
 
 ${boxMod("MOD. 130","IRPF — Pago fraccionado (art. 110.3 RIRPF)","#4338ca","#3730a3",[
   ["Ingresos acumulados (base imponible)","+"+fmtN(totales.ventasBase)+" €",""],
-  ["Gastos deducibles acumulados","-"+fmtN(totales.gastosBase+totales.nominasCoste)+" €","color:#dc2626"],
+  ["Gastos deducibles acumulados","-"+fmtN(totales.gastosFiscales ?? (totales.gastosBase+totales.nominasCoste))+" €","color:#dc2626"],
+  ...(hayTienda ? [["  (incluye coste mercancía tienda "+fmtN(totales.recargoEq.costeMercancia)+" €)","","font-size:8px;color:#7e22ce"]] : []),
   ["Rendimiento neto estimado",fmtN(rndNeto)+" €","font-weight:900"],
   ["Tipo de pago fraccionado","20%",""],
   ["Cuota íntegra (20% × rendimiento)",fmtN(Math.max(0,rndNeto)*0.20)+" €",""],
@@ -5048,11 +5090,12 @@ function VistaInformeGestoria({ facturas, nominas, actividades }) {
               <div className="flex items-center gap-2 mb-3"><span className="bg-indigo-600 text-white text-xs font-black px-2 py-0.5 rounded">MOD. 130</span><span className="text-sm font-bold text-indigo-900">IRPF</span></div>
               <div className="space-y-2 text-sm">
                 <div className="flex justify-between"><span className="text-gray-600">Ingresos</span><span className="font-mono">{fmt(totales.ventasBase)}</span></div>
-                <div className="flex justify-between"><span className="text-gray-600">Gastos deducibles</span><span className="font-mono">-{fmt(totales.gastosBase+totales.nominasCoste)}</span></div>
+                <div className="flex justify-between"><span className="text-gray-600">Gastos deducibles</span><span className="font-mono">-{fmt(totales.gastosFiscales ?? (totales.gastosBase+totales.nominasCoste))}</span></div>
                 <div className="flex justify-between font-semibold"><span className="text-gray-700">Rendimiento neto</span><span className={`font-mono ${colorB(totales.beneficioBruto)}`}>{fmt(totales.beneficioBruto)}</span></div>
                 <div className="flex justify-between"><span className="text-gray-600">× 20%</span><span className="font-mono">{fmt(Math.max(0,totales.beneficioBruto)*0.20)}</span></div>
                 {totales.ventasRetencion>0&&<div className="flex justify-between"><span className="text-gray-600">- Retenciones</span><span className="font-mono text-rose-600">-{fmt(totales.ventasRetencion)}</span></div>}
                 <div className="flex justify-between font-black text-base border-t border-indigo-300 pt-2 text-indigo-900"><span>PAGO FRACCIONADO</span><span className="font-mono">{fmt(totales.irpfFraccionado)}</span></div>
+                {(totales.recargoEq?.nVentas||0)>0 && <div className="text-xs text-violet-700 bg-violet-50 border border-violet-200 rounded-lg p-2 mt-2">Incluye beneficio de tienda ({fmt(totales.recargoEq.beneficioTienda)} €) según art.148-163 LIVA (régimen especial no declarable en 303).</div>}
               </div>
             </div>
             <div className="bg-violet-50 border border-violet-200 rounded-2xl p-5">
